@@ -328,7 +328,8 @@ for (j in x_axes) {
     plot_list_v2[[plot_key]] <- ggplot(comparison_data, aes(x = .data[[j]], y = .data[[plt]] )) +
 
       geom_jitter(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
-      geom_smooth(method = "lm", se = TRUE, color = "darkblue", linetype = "dashed") +
+      #geom_smooth(method = "lm", se = TRUE, color = "darkblue", linetype = "dashed") +
+      geom_smooth(method = "lm", se = TRUE, aes(color = Time_Group), linetype = "dashed") +
       labs(title = paste0(plt, " vs ", gsub("_", " ", j)), # Dynamic title
            x = gsub("_", " ", j),                          # Dynamic X label
            y = if (plt == "Histopath_Brain") plt else paste0("log10 - ", plt), #qPCR_Lung is already log10ed
@@ -337,21 +338,25 @@ for (j in x_axes) {
       facet_wrap(~ Vaccination_Status) +   #horizontal stack
       theme_bw(base_size = 10) +
       theme(legend.position = "bottom",
-            plot.title = element_text(face = "bold", size = 12),
+            plot.title = element_text(face = "bold", size = 10),
             plot.subtitle = element_text(size = 10)) +
       # Pearson with "P:" prefix
-      ggpubr::stat_cor(method = "pearson",
-                       output.type = "text", 
-                       label.x.npc = "left", 
-                       label.y.npc = 0.97,
-                       aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+      # ggpubr::stat_cor(method = "pearson",
+      #                  output.type = "text", 
+      #                  label.x.npc = "left", 
+      #                  label.y.npc = 0.97,
+      #                  aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
       
       # Spearman with "S:" prefix
-      ggpubr::stat_cor(method = "spearman",
-                       output.type = "text", 
-                       label.x.npc = "left", 
-                       label.y.npc = 0.87,
-                       aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))
+      ggpubr::stat_cor(
+        aes(
+          color=Time_Group,
+          group=Time_Group,
+          label.y.npc = 1-0.1 * as.numeric(Time_Group),
+          label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))),
+        method = "spearman",
+        output.type = "text", 
+        label.x.npc = "left")
 }}
 
 # Combine all six plots
@@ -371,7 +376,7 @@ combined_plot <- annotate_figure(
                   face = "bold", size = 10))
 
 # Save the combined plot - Increased height to 8 since you have 2 rows now
-ggsave(paste0(output_dir, "lung_histopath_vs_digital_comparison_v4_log10.pdf"), 
+ggsave(paste0(output_dir, "lung_histopath_vs_digital_comparison_v6_log10.pdf"), 
        combined_plot, 
        width = 9, 
        height = 16, 

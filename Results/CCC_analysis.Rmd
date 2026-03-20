@@ -5,6 +5,13 @@ output: html_notebook
 This is the CCC analysis notebook, divided in two main parts *Brain* and *Lung*
 It starts by Brain, loading the data, cleaning and merging the data, transforming the corresponding columns for the analysis and finding the best comparable scales among manual score [0-4] to digital scores (%), where in Brain we have a max of 20% while in Lung we have a max of 60%. Therefore, using a comparable scale to meet the assumptions for the CCC analysis, we will establish.
 For *Brain* [0-4] corresponding to (-Inf,0,5,10,15,20,Inf)(%), while for *Lung* [0-4] we will establish to (-Inf,15,30,45,60,Inf)(%)
+# Load libraries
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+```
+
 
 ```{r}
 gc()
@@ -179,15 +186,62 @@ brain_scores <- comparison_data_brain |>
   ) |>
   drop_na()
 
+# Brain correlation in general manual to digital
+cor_spearman_brain <- cor(brain_scores$manual, brain_scores$digital,method = "spearman", use = "complete.obs")
+cor_spearman_brain
+```
+
+```{r}
+ggplot(brain_scores, aes(x = manual, y = digital)) +
+  geom_point(size = 3, alpha = 0.7, color = "darkblue") +
+  geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
+  ggpubr::stat_cor(
+    method = "spearman",
+    label.x.npc = "left",
+    label.y.npc = "top",
+    aes(label = paste0("Spearman = ", after_stat(r.label),
+                       "\nP = ", after_stat(p.label)))) +
+  labs(title = "Manual vs Digital Brain Scores",
+    x = "Manual semiquantification (brain)",
+    y = "Digital quantification (brain)") +
+  theme_bw(base_size = 10)
+```
+
+
+```{r}
+# Brain correlatios scores manual to digital by time group and vaccination status.
 brain_scores_cor_brain <- list()
 for (vs in brain_scores$vaccination_status){
   for (tg in brain_scores$time_group){
     df <- brain_scores |> dplyr::filter(vaccination_status == vs & time_group == tg)
     brain_scores_cor_brain[[paste0(vs)]][[paste0(tg)]] <- cor(df$manual,df$digital,method = "spearman", use = "complete.obs")}}
-
-cor_spearman_brain <- cor(brain_scores$manual, brain_scores$digital,method = "spearman", use = "complete.obs")
-cor_spearman_brain
+brain_scores_cor_brain
 ```
+
+```{r}
+ggplot(brain_scores, aes(x = manual, y = digital)) +
+  geom_point(aes(color = time_group), size = 3, alpha = 0.7) +
+  geom_smooth(aes(color = time_group), method = "lm", se = FALSE) +
+  
+  # Spearman correlation per facet
+  ggpubr::stat_cor(
+    method = "spearman",
+    label.x.npc = "left",
+    label.y.npc = "top",
+    aes(label = paste0("S = ", after_stat(r.label),
+                       "\nP = ", after_stat(p.label)))) +
+  facet_grid(vaccination_status ~ time_group) +
+  labs(title = "Manual vs Digital Brain Scores",
+    x = "Manual semiquantification (brain)",
+    y = "Digital quantification (brain)") +
+  theme_bw(base_size = 10) +
+  theme(legend.position = "none",
+    strip.text = element_text(size = 10, face = "bold"))
+```
+
+
+
+
 # MI
 #### Will tell you if the methods are related, but it cannot tell you if they are interchangeable. 
 #### High MI just means the digital score is a good "predictor" of the manual score.
@@ -252,9 +306,6 @@ write.table(comparison_data_brain,file = paste0(output_dir,"comparison_data_brai
 
 
 ```{r}
-library(ggplot2)
-library(ggpubr)
-
 brain_ccc <- ggplot(brain_scores, aes(x = manual, y = digital_binned)) +
   geom_jitter(size = 3, alpha = 0.7, color = "#3C1642") +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
@@ -370,13 +421,63 @@ comparison_data_lung
 lung_scores <- comparison_data_lung |>
   dplyr::select(
     manual = `manual semiquantification lung`,
-    digital = `digital quantification lung`
-  )# |>drop_na()
+    digital = `digital quantification lung`,
+    vaccination_status = Vaccination_Status,
+    time_group = Time_Group)# |>drop_na()
 
 cor_spearman_lung <- cor(lung_scores$manual, lung_scores$digital,
                     method = "spearman", use = "complete.obs")
 cor_spearman_lung
 ```
+
+```{r}
+ggplot(lung_scores, aes(x = manual, y = digital)) +
+  geom_point(size = 3, alpha = 0.7, color = "darkorange") +
+  geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
+  ggpubr::stat_cor(
+    method = "spearman",
+    label.x.npc = "left",
+    label.y.npc = "top",
+    aes(label = paste0("Spearman = ", after_stat(r.label),
+                       "\nP = ", after_stat(p.label)))) +
+  labs(title = "Manual vs Digital Lung Scores",
+    x = "Manual semiquantification (lung)",
+    y = "Digital quantification (lung)") +
+  theme_bw(base_size = 10)
+```
+
+```{r}
+ggplot(lung_scores, aes(x = manual, y = digital)) +
+  geom_point(aes(color = time_group), size = 3, alpha = 0.7) +
+  geom_smooth(aes(color = time_group), method = "lm", se = FALSE) +
+  
+  # Spearman correlation per facet
+  ggpubr::stat_cor(
+    method = "spearman",
+    label.x.npc = "left",
+    label.y.npc = "top",
+    aes(label = paste0("S = ", after_stat(r.label),
+                       "\nP = ", after_stat(p.label)))) +
+  
+  facet_grid(vaccination_status ~ time_group) +
+  labs(title = "Manual vs Digital Lung Scores",
+    x = "Manual semiquantification (lung)",
+    y = "Digital quantification (lung)") +
+  theme_bw(base_size = 10) +
+  theme(legend.position = "none",
+    strip.text = element_text(size = 10, face = "bold"))
+
+```
+
+```{r}
+write.table(comparison_data_lung,file = paste0(output_dir,"comparison_data_lung.csv"),sep = ",")
+```
+
+
+```{r}
+```
+
+
 
 # MI
 #### Will tell you if the methods are related, but it cannot tell you if they are interchangeable. 

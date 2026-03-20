@@ -1,0 +1,8 @@
+"Time_Group","Vaccination_Status","n_samples","... <- NULL"
+"Clearance (8-14 dpi)","v",13,0.591031984423098
+"Early (0-5 dpi)","n",104,0.591031984423098
+"Early (0-5 dpi)","v",27,0.591031984423098
+"Other","n",3,0.591031984423098
+"Other","v",17,0.591031984423098
+"Resolution (6-7 dpi)","n",28,0.591031984423098
+"Resolution (6-7 dpi)","v",56,0.591031984423098

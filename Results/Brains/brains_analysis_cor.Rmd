@@ -1,0 +1,2042 @@
+---
+title: "Nedim Mice Brain Correlation Analysis"
+output: html_notebook
+---
+
+# Packages 
+```{r}
+#library("BiocManager")
+rm(list = ls(all.names = TRUE))
+gc()
+#.libPaths("/home/mbotos/R/x86_64-pc-linux-gnu-library/"4.2"/")
+```
+
+
+
+```{r}
+#.libPaths(,c("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/"))
+.libPaths("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/")
+#unloadNamespace("limma")
+```
+
+```{r}
+# BiocManager::install(c("dorothea"),force=TRUE,ask = TRUE)
+# library("dorothea")
+library("BiocManager")
+library("dplyr")
+library("tidyr")
+#unloadNamespace("edgeR")
+#unloadNamespace("limma")
+#library("edgeR")
+library("ggplot2")
+library("ggrepel")
+library("svglite")
+library("biomaRt")
+library("corrplot")
+#install.packages("ggpubr")
+library("ggpubr")
+library("gridExtra")
+```
+
+## Read excel file
+```{r}
+sample_sheet = "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/data/All lungs and brain_cleaned_Dec2025_NK.xlsx"
+sample_sheet_sheet_4_brain = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 4)
+head(sample_sheet_sheet_4_brain)
+colnames(sample_sheet_sheet_4_brain)
+
+
+sample_sheet_sheet_6_brain = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 6)
+head(sample_sheet_sheet_6_brain)
+colnames(sample_sheet_sheet_6_brain)
+
+sample_sheet_sheet_4_brain_coi <- sample_sheet_sheet_4_brain  |> dplyr::select(ID,`ID IVI`,`% Positive area`)
+colnames(sample_sheet_sheet_4_brain_coi)
+colnames(sample_sheet_sheet_6_brain)
+
+# Need to merge colun % Positive Area from sheet 4 with Brain to plot sheet 6
+sample_sheet_sheet_6_brain <- sample_sheet_sheet_6_brain |> dplyr::rename("ID"="ID...39")
+sample_sheet_brain <- sample_sheet_sheet_6_brain |> dplyr::left_join(sample_sheet_sheet_4_brain_coi ,by = "ID")#c("ID...1"="ID"))
+
+colnames(sample_sheet_brain)
+head(sample_sheet_brain$`% Positive area.y`)
+
+#sample_sheets = sample_sheets[,-1]  # Skip first column
+```
+# Add lung AI % score.
+```{r}
+sample_sheet = "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/data/All lungs and brain_cleaned_Dec2025_NK.xlsx"
+sample_sheet_lungs = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 2)
+head(sample_sheet_lungs)
+colnames(sample_sheet_lungs)
+table(sample_sheet_lungs$`ID IVI`,sample_sheet_lungs$`Euthanasia day (dpi)`)
+
+# add % Positivity in total parenchyma to brains to plot
+head(sample_sheet_brain)
+sample_sheet_brain$ID...1
+sample_sheet_brain <- sample_sheet_brain |> dplyr::left_join(sample_sheet_lungs ,by = c("ID...1"="ID"))#c("ID...1"="ID"))
+table(sample_sheet_brain$ID...1,sample_sheet_brain$Tissue.y) # --> Clearly telling us that samples that share lung and brain measurements are in the oreder of 15
+
+#sample_sheet_brain_fulljoin <- sample_sheet_brain |> dplyr::full_join(sample_sheet_lungs ,by = c("ID...1"="ID"))#c("ID...1"="ID"))full_join
+#sample_sheet_brain <- sample_sheet_brain |> dplyr::full_join(sample_sheet_lungs ,by = c("ID...1"="ID"))#c("ID...1"="ID"))full_join
+#table(sample_sheet_brain_fulljoin$ID...1,sample_sheet_brain_fulljoin$Tissue.y) #
+#table(sample_sheet_brain$ID...1,sample_sheet_brain$Tissue.y) #
+
+```
+
+
+## Make groups for animals
+### Early infection (0-4)
+### Peak of disease (5-7)
+### Resolution (8-max)
+
+```{r}
+
+table(sample_sheet_brain$`Vaccinated (v), none (n)`)
+table(sample_sheet_brain$`ID IVI.x`,sample_sheet_brain$`Euthanasia day (dpi).x`)
+
+sample_sheet_brain$Euthanasia_day_dpi = gsub(x = sample_sheet_brain$`Euthanasia day (dpi).x`,
+                                             pattern ="?p\\.v$",
+                                             replacement = "")
+sample_sheet_brain$Euthanasia_day_dpi <- as.numeric(sample_sheet_brain$Euthanasia_day_dpi)
+  
+
+message("using latest day of euthanasia day")
+multima_day <- max(sample_sheet_brain$Euthanasia_day_dpi)
+
+sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(
+    # Time group based on euthanasia day
+    Time_Group = case_when(
+      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (0-4 dpi)",
+      Euthanasia_day_dpi >= 5 & Euthanasia_day_dpi <= 7 ~ "Peak of disease (5-7 dpi)",
+      Euthanasia_day_dpi >= 8 & Euthanasia_day_dpi <= multima_day  ~ paste0("Resolution (8-",multima_day," dpi)"),
+      TRUE ~ "Other"),
+    # Vaccination status
+    Vaccination_Status = if_else(`Vaccinated (v), none (n).x` == "n", "n", "v") |> factor())#(n)`, levels = c("n", "v"))
+  
+sample_sheet_brain <- sample_sheet_brain |> mutate( Vaccination_Status = case_when( grepl(" p\\.v$", `Euthanasia day (dpi).x`) ~ "v/nc", TRUE ~ as.character(Vaccination_Status) ),
+                                                     Vaccination_Status = factor(Vaccination_Status, levels = c("n", "v", "v/nc")))
+
+table(sample_sheet_brain$Vaccination_Status)
+# Create combined grouping variable
+sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(
+    Combined_Group = paste0(Time_Group, "-", Vaccination_Status)
+  )
+
+```
+
+```{r}
+# Select key measures for correlation analysis
+output_dir <- "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/Results/Brains/"
+if (!dir.exists(output_dir)){dir.create(output_dir,recursive = TRUE)}
+colnames(sample_sheet_brain)
+Mergecorrelation_vars <- c(
+  "Manual Score brain",
+  "Manual Score lung",
+  "Histopathological score lung",
+  "Histopathological score brain",
+  "qPCR swabs log10",
+  "qPCR swabs (RNA/ml).x",
+  "qPCR Lung (RNA/ml).x",
+  "qPCR Brain (RNA/ml)",
+  "qPCR brain log10",
+  "Live Virus log10 brain",
+  "Live virus (PFU/mouse) brain",
+  "Live virus (PFU/mouse) lung",
+  "Live Virus log10 lung",
+  "% Positive area.y") #.y is the brain digital sheet in the excel, and the lung ins the parenchyma.
+
+# Function to create correlation matrix plot
+create_correlation_plot <- function(data, group_name,correlation_vars=Mergecorrelation_vars) {
+  # Select and clean data
+  n_samples <- length(unique(data$'ID IVI.x'))
+  cor_data <- data |> dplyr::select(all_of(correlation_vars)) #|> #tidyr::drop_na()
+  
+  if(nrow(cor_data) < 2) {
+    message(paste("Not enough data for group:", group_name))
+    return(NULL)
+  }
+  
+  # Calculate correlation matrix
+  cor_matrix <- cor(cor_data, use = "pairwise.complete.obs", method = "spearman")#pearson
+  
+  # Create plot
+  pdf(paste0(output_dir,"correlation_matrix_", gsub("[^A-Za-z0-9]", "_", group_name), ".pdf"),
+      width = 12, height = 10)
+  
+  corrplot::corrplot(cor_matrix, 
+           method = "color",
+           type = "lower",  # Half triangle (lower)
+           tl.col = "black",
+           tl.srt = 45,
+           tl.cex = 0.8,
+           addCoef.col = "black",
+           number.cex = 0.7,
+           col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(200),
+           title = paste("Correlation Matrix -", group_name," n=",n_samples),
+           mar = c(0, 0, 2, 0))
+  
+  dev.off()
+  
+  return(cor_matrix)
+}
+
+# Generate correlation matrices for each group
+groups <- unique(sample_sheet_brain$Combined_Group)
+
+correlation_results <- list()
+for(group in groups) {
+  group_data <- sample_sheet_brain |> dplyr::filter(Combined_Group == group)
+  correlation_results[[group]] <- create_correlation_plot(data = group_data, group_name = group)
+}
+
+# Overall correlation (all data)
+correlation_results[["Overall"]] <- create_correlation_plot(sample_sheet_brain, "Overall")
+
+# By vaccination status only
+for(vac_status in c("n", "v")) {
+  vac_data <- sample_sheet_brain |> dplyr::filter(Vaccination_Status == vac_status)
+  vac_label <- ifelse(vac_status == "v", "Vaccinated", "Non-vaccinated")
+  correlation_results[[vac_label]] <- create_correlation_plot(vac_data, vac_label)
+}
+
+# By time group only
+time_groups <- c("Early (0-4 dpi)", "Resolution (5-7 dpi)", paste0("Clearance (8-",multima_day,"dpi)"))
+for(time_group in time_groups) {
+  time_data <- sample_sheet_brain  |> dplyr::filter(Time_Group == time_group)
+  correlation_results[[time_group]] <- create_correlation_plot(time_data, time_group)
+}
+
+
+```
+
+
+```{r}
+#sample_sheet_brain_fulljoin
+sample_sheet_brain
+```
+
+```{r}
+#colnames(sample_sheet_brain_fulljoin)
+#comparison_data <- sample_sheet_brain_fulljoin |> dplyr::select( `Manual Score brain`,  `Manual Score lung`,  `% Positivity in total parenchyma`,  `% Positive area.y`)
+```
+
+# COMPARATIVE ANALYSIS: HISTOPATHOLOGICAL SCORES VS % POSITIVE AREA
+```{r}
+# ============================================================================
+# COMPARATIVE ANALYSIS: HISTOPATHOLOGICAL SCORES VS % POSITIVE AREA
+# ============================================================================
+sample_sheet_brain$sex <- as.factor(toupper(sample_sheet_brain$sex))
+
+# Prepare data for comparison
+comparison_data <- sample_sheet_brain |> 
+  dplyr::select(
+    `Manual Score brain`,
+    `Manual Score lung`,
+    ID...1,
+    sex,
+    `qPCR swabs (RNA/ml).x`,
+    `Histopathological score lung`,
+    `Histopathological score brain`,
+    #`Histopathological score brain...24`,
+    `% Positive area.y`,
+    Time_Group,
+    Vaccination_Status,
+    `qPCR Lung (RNA/ml).x`,
+    `qPCR Brain (RNA/ml)`,
+    #qPCR brain log10,
+    `Live Virus log10 brain`,
+    `Live virus (PFU/mouse) brain`,
+    `Live virus (PFU/mouse) lung`,
+    `% Positivity in total parenchyma`,
+    `qPCR Lung (RNA/ml).y`) |> drop_na(`% Positive area.y`)
+
+
+
+
+# Rename for easier plotting
+names(comparison_data) <- c(
+  "manual semiquantification brain",
+  "manual semiquantification lung",
+  "ID",
+  "sex",
+  "qPCR_swabs",
+  "Histopath_Lung",
+  "Histopath_Brain",
+  #"Histopath_Brain_24",
+  "digital quantification brain",
+  "Time_Group",
+  "Vaccination_Status",
+  "qPCR Lung (RNA/ml)",
+  "qPCR Brain (RNA/ml)",
+  #qPCR brain log10,
+  "Live Virus log10 brain",
+  "Live virus (PFU/mouse) brain",
+  "Live virus (PFU/mouse) lung",
+  "digital quantification lung",
+  "qPCR Lung(RNA/ml) lung")
+
+# Calculate correlations for each measure
+cor_lung <- cor(comparison_data$`digital quantification lung`, comparison_data$Histopath_Lung, use = "complete.obs", method="spearman")
+cor_brain <- cor(comparison_data$`digital quantification brain`, comparison_data$Histopath_Brain, use = "complete.obs", method="spearman")
+#cor_brain_24 <- cor(comparison_data$Algorithm_Score, comparison_data$Histopath_Brain_24, use = "complete.obs", method="spearman")
+
+
+cor_lung_manual <- cor(comparison_data$`manual semiquantification lung`, comparison_data$Histopath_Lung, use = "complete.obs", method="spearman")
+cor_brain_manual <- cor(comparison_data$`manual semiquantification brain`, comparison_data$Histopath_Brain, use = "complete.obs", method="spearman")
+
+# Create individual plots
+plot_lung <- ggplot(comparison_data, aes(x = `digital quantification lung`, y = Histopath_Lung)) +
+  geom_point(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkblue", linetype = "dashed") +
+  labs(
+    title = "Histopathological Score Lung vs Algorithm",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Lung",
+    subtitle = sprintf("Spearman r = %.3f", cor_lung)
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11)
+  ) +
+  ggpubr::stat_cor(method = "spearman", label.x.npc = 0.1, label.y.npc = 0.95)#pearson
+
+plot_brain <- ggplot(comparison_data, aes(x = `digital quantification brain`, y = Histopath_Brain)) +
+  geom_point(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred", linetype = "dashed") +
+  labs(
+    title = "Histopathological Score Brain vs Algorithm",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Brain",
+    subtitle = sprintf("Spearman r = %.3f", cor_brain)
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11)
+  ) +
+  stat_cor(method = "spearman", label.x.npc = 0.1, label.y.npc = 0.95)
+
+
+plot_cor_lung_manual <- ggplot(comparison_data, aes(x = `manual semiquantification lung`, y = Histopath_Lung)) +
+  geom_point(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkgreen", linetype = "dashed") +
+  labs(
+    title = "Histopathological Score Lung vs Manual",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Lung",
+    #subtitle = sprintf("Spearman r = %.3f", cor_brain)
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 12),
+    plot.subtitle = element_text(size = 10)  ) +
+  #stat_cor(method = "spearman", label.x.npc = 0.1, label.y.npc = 0.95)
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))
+
+plot_cor_brain_manual <- ggplot(comparison_data, aes(x = `manual semiquantification brain`, y = Histopath_Brain)) +
+  geom_point(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkorange", linetype = "dashed") +
+  labs(
+    title = "Histopathological Score Brain vs Manual",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Brain",
+    #subtitle = sprintf("Spearman r = %.3f", cor_brain)
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 12),
+    plot.subtitle = element_text(size = 10)  ) +
+  #stat_cor(method = "spearman", label.x.npc = 0.1, label.y.npc = 0.95)
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))
+
+
+
+
+# 
+# plot_brain_24 <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Brain_24)) +
+#   geom_point(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
+#   geom_smooth(method = "lm", se = TRUE, color = "darkgreen", linetype = "dashed") +
+#   labs(
+#     title = "Histopathological Score Brain (24) vs Algorithm",
+#     x = "% Positive Area (Algorithm)",
+#     y = "Histopathological Score Brain (24)",
+#     subtitle = sprintf("Spearman r = %.3f", cor_brain_24)
+#   ) +
+#   theme_bw(base_size = 12) +
+#   theme(
+#     legend.position = "bottom",
+#     plot.title = element_text(face = "bold", size = 14),
+#     plot.subtitle = element_text(size = 11)
+#   ) +
+#   stat_cor(method = "spearman", label.x.npc = 0.1, label.y.npc = 0.95)
+
+# Combine all three plots into one figure
+combined_plot <- ggarrange(
+  plot_lung, 
+  plot_brain, 
+  plot_cor_lung_manual,
+  plot_cor_brain_manual,
+  #plot_brain_24,
+  ncol = 2, 
+  nrow = 2,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+# Add main title
+combined_plot <- annotate_figure(
+  combined_plot,
+  top = text_grob("Algorithm vs Manual Performance Scores", 
+                  face = "bold", size = 12)
+)
+
+# Save the combined plot
+ggsave(paste0(output_dir,"histopath_vs_algorithm_comparison.pdf"), 
+       combined_plot, 
+       width = 10, 
+       height = 9, 
+       dpi = 600)
+
+```
+```{r}
+comparison_data
+```
+
+
+```{r}
+comparison_data$`digital quantification lung`
+comparison_data$`manual semiquantification lung`
+```
+
+```{r}
+comparison_data$Vaccination_Status
+```
+```{r}
+message("Some values in the qPCR for swabs and Brain (RNA/ml) and Live virus, are converted to log10, therefore ok, while others have a vlaue that is huge and need to be converted.")
+head(comparison_data$qPCR_swabs)
+head(comparison_data$`qPCR Brain (RNA/ml)`)
+head(comparison_data$`Live virus (PFU/mouse) brain`)
+
+```
+```{r}
+message("Tipycally values smaller than 100 are log10 converted...")
+log_candidates <- c("qPCR_swabs","qPCR Brain (RNA/ml)", "Live virus (PFU/mouse) brain")
+for (col in log_candidates) {
+  comparison_data[[col]] <- ifelse(
+    comparison_data[[col]] > 100,
+    log10(comparison_data[[col]]),
+    comparison_data[[col]])}
+
+```
+
+
+```{r}
+head(comparison_data$qPCR_swabs)
+min(round(comparison_data$qPCR_swabs[!is.na(comparison_data$qPCR_swabs)],digits = 3))
+max(round(comparison_data$qPCR_swabs[!is.na(comparison_data$qPCR_swabs)],digits = 3))
+min(round(comparison_data$qPCR_swabs,digits = 3))
+head(comparison_data$`qPCR Brain (RNA/ml)`)
+min(round(comparison_data$`qPCR Brain (RNA/ml)`[!is.na(comparison_data$`qPCR Brain (RNA/ml)`)],digits = 5))
+max(round(comparison_data$`qPCR Brain (RNA/ml)`[!is.na(comparison_data$`qPCR Brain (RNA/ml)`)],digits = 5))
+#comparison_data$`qPCR Brain (RNA/ml)`[round(comparison_data$`qPCR Brain (RNA/ml)`[!is.na(comparison_data$`qPCR Brain (RNA/ml)`)],digits = 3) == 68.616]
+#comparison_data$`qPCR Brain (RNA/ml)`[comparison_data$`qPCR Brain (RNA/ml)` == 68.616] found and converted to the real value from Nedim data.
+
+head(comparison_data$`Live virus (PFU/mouse) brain`)
+```
+
+
+
+# plot v2 
+```{r}
+# 
+# names(comparison_data) <- c(
+#   "Manual_score_brain",
+#   "Manual_score_lung",
+#   "ID",
+#   "sex",
+#   "qPCR_swabs",
+#   "Histopath_Lung",
+#   "Histopath_Brain",
+#   #"Histopath_Brain_24",
+#   "Algorithm_Score",
+#   "Time_Group",
+#   "Vaccination_Status",
+#   "qPCR Lung (RNA/ml)",
+#   "qPCR Brain (RNA/ml)",
+#   #qPCR brain log10,
+#   "Live Virus log10 brain",
+#   "Live virus (PFU/mouse) brain",
+#   "Live virus (PFU/mouse) lung")
+# 
+# 
+
+
+# Rename for easier plotting
+# names(comparison_data) <- c(
+#   "Manual_score_brain",
+#   "Manual_score_lung",
+#   "ID",
+#   "sex",
+#   "qPCR_swabs",
+#   "Histopath_Lung",
+#   "Histopath_Brain",
+#   #"Histopath_Brain_24",
+#   "Algorithm_Score",
+#   "Time_Group",
+#   "Vaccination_Status",
+#   "qPCR Lung (RNA/ml)",
+#   "qPCR Brain (RNA/ml)",
+#   #qPCR brain log10,
+#   "Live Virus log10 brain",
+#   "Live virus (PFU/mouse) brain",
+#   "Live virus (PFU/mouse) lung",
+#   "Algorithm_Score_in_total_parenchyma_lung",
+#   "qPCR Lung(RNA/ml) lung")
+names(comparison_data) <- c(
+  "manual semiquantification brain",
+  "manual semiquantification lung",
+  "ID",
+  "sex",
+  "qPCR_swabs",
+  "Histopath_Lung",
+  "Histopath_Brain",
+  #"Histopath_Brain_24",
+  "digital quantification brain",
+  "Time_Group",
+  "Vaccination_Status",
+  "qPCR Lung (RNA/ml)",
+  "qPCR Brain (RNA/ml)",
+  #qPCR brain log10,
+  "Live Virus log10 brain",
+  "Live virus (PFU/mouse) brain",
+  "Live virus (PFU/mouse) lung",
+  "digital quantification lung",
+  "qPCR Lung(RNA/ml) lung")
+
+
+
+# transform data to log10 of the meassures for the y axis Hispothalogy, qPCR_swabs(RNA/ml), and Live Virus (PFU/ml)
+# comparison_data <- 
+
+# Create individual plots
+#for (plt in names(scores_vs_manual_vs_ai)){
+plot_list_v2 <- list()
+#comparison_data$`qPCR Brain (RNA/ml)`
+plot_values <- c("Histopath_Brain", "qPCR_swabs","qPCR Brain (RNA/ml)", "Live virus (PFU/mouse) brain")
+x_axes <- c("manual semiquantification brain", "digital quantification brain")
+
+for (j in x_axes) {
+  for (plt in plot_values) {
+    
+    # Create a unique key for the list
+    plot_key <- paste0(j, "_", plt)
+    
+    # Decide whether to log-transform 
+    #y_var <- if (plt == "Histopath_Brain") { .data[[plt]] } else { log10(.data[[plt]]) }
+    # Compute y outside ggplot, .data[[]] only exists in the ggplots
+    #y_var <- if (plt == "Histopath_Brain") { comparison_data[[plt]] } else { log10(comparison_data[[plt]]) }
+    message("Values were mixed but now are solved and those without conversion were converted to log10")
+    n_samples = length(unique(comparison_data[["ID"]][!is.na(comparison_data[[plt]]) & comparison_data[[plt]] != ""]))
+    #plot_list_v2[[plot_key]] <- ggplot(comparison_data, aes(x = .data[[j]], y = log10(.data[[plt]]))) +
+    plot_list_v2[[plot_key]] <- ggplot(comparison_data, aes(x = .data[[j]], y = .data[[plt]])) +
+      geom_jitter(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
+      geom_smooth(method = "lm", se = TRUE, color = "darkgreen", linetype = "dashed") +
+      labs(title = paste0(plt, " vs ", gsub("_", " ", j)), # Dynamic title
+           x = gsub("_", " ", j),                          # Dynamic X label
+           y = if (plt == "Histopath_Brain") plt else paste0("log10 - ", plt),
+           subtitle = paste0("n=",n_samples)) +
+      {if (j == "manual semiquantification brain") {xlim(0, 5)} else {NULL}} +
+      theme_bw(base_size = 10) +
+      theme(legend.position = "bottom",
+            plot.title = element_text(face = "bold", size = 12),
+            plot.subtitle = element_text(size = 10)) +
+      # Pearson with "P:" prefix
+      ggpubr::stat_cor(method = "pearson",
+                       output.type = "text", 
+                       label.x.npc = "left", 
+                       label.y.npc = 0.97,
+                       aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+      
+      # Spearman with "S:" prefix
+      ggpubr::stat_cor(method = "spearman",
+                       output.type = "text", 
+                       label.x.npc = "left", 
+                       label.y.npc = 0.87,
+                       aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))
+}}
+
+# Combine all six plots
+# Note: plot_list_v2 is a named list; using names(plot_list_v2) ensures all are included
+combined_plot <- ggarrange(
+  plotlist = plot_list_v2, 
+  ncol = 2, 
+  nrow = 4,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+# Add main title
+combined_plot <- annotate_figure(
+  combined_plot,
+  top = text_grob("Brain Manual vs Digital Scores", 
+                  face = "bold", size = 10))
+
+# Save the combined plot - Increased height to 8 since you have 2 rows now
+ggsave(paste0(output_dir, "brain_histopath_vs_digital_comparison_v4_log10.pdf"), 
+       combined_plot, 
+       width = 9, 
+       height = 16, 
+       dpi = 600) # 1200 is very high; 600 is usually plenty for publication
+```
+```{r}
+```
+
+# Reload data brain
+```{r}
+
+sample_sheet = "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/data/All lungs and brain_cleaned_Dec2025_NK.xlsx"
+sample_sheet_sheet_4_brain = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 4)
+head(sample_sheet_sheet_4_brain)
+colnames(sample_sheet_sheet_4_brain)
+
+
+sample_sheet_sheet_6_brain = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 6)
+head(sample_sheet_sheet_6_brain)
+colnames(sample_sheet_sheet_6_brain)
+
+sample_sheet_sheet_4_brain_coi <- sample_sheet_sheet_4_brain  |> dplyr::select(ID,`ID IVI`,`% Positive area`)
+colnames(sample_sheet_sheet_4_brain_coi)
+colnames(sample_sheet_sheet_6_brain)
+
+# Need to merge colun % Positive Area from sheet 4 with Brain to plot sheet 6
+sample_sheet_sheet_6_brain <- sample_sheet_sheet_6_brain |> dplyr::rename("ID"="ID...39")
+sample_sheet_brain <- sample_sheet_sheet_6_brain |> dplyr::left_join(sample_sheet_sheet_4_brain_coi ,by = "ID")#c("ID...1"="ID"))
+
+colnames(sample_sheet_brain)
+head(sample_sheet_brain$`% Positive area.y`)
+
+
+table(sample_sheet_brain$`Vaccinated (v), none (n)`)
+table(sample_sheet_brain$`ID IVI.x`,sample_sheet_brain$`Euthanasia day (dpi)`)
+
+sample_sheet_brain$Euthanasia_day_dpi = gsub(x = sample_sheet_brain$`Euthanasia day (dpi)`,
+                                             pattern ="?p\\.v$",
+                                             replacement = "")
+sample_sheet_brain$Euthanasia_day_dpi <- as.numeric(sample_sheet_brain$Euthanasia_day_dpi)
+  
+
+message("using latest day of euthanasia day")
+multima_day <- max(sample_sheet_brain$Euthanasia_day_dpi)
+
+sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(
+    # Time group based on euthanasia day
+    Time_Group = case_when(
+      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (0-4 dpi)",
+      Euthanasia_day_dpi >= 5 & Euthanasia_day_dpi <= 7 ~ "Peak of disease (5-7 dpi)",
+      Euthanasia_day_dpi >= 8 & Euthanasia_day_dpi <= multima_day  ~ paste0("Resolution (8-",multima_day," dpi)"),
+      TRUE ~ "Other"),
+    # Vaccination status
+    Vaccination_Status = if_else(`Vaccinated (v), none (n)` == "n", "n", "v") |> factor())#(n)`, levels = c("n", "v"))
+  
+sample_sheet_brain <- sample_sheet_brain |> mutate( Vaccination_Status = case_when( grepl(" p\\.v$", `Euthanasia day (dpi)`) ~ "v/nc", TRUE ~ as.character(Vaccination_Status) ),
+                                                     Vaccination_Status = factor(Vaccination_Status, levels = c("n", "v", "v/nc")))
+
+table(sample_sheet_brain$Vaccination_Status)
+# Create combined grouping variable
+sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(Combined_Group = paste0(Time_Group, "-", Vaccination_Status))
+
+sample_sheet_brain$sex <- as.factor(toupper(sample_sheet_brain$sex))
+
+# Prepare data for comparison
+comparison_data_brain <- sample_sheet_brain |> 
+  dplyr::select(
+    `Manual Score brain`,
+    ID...1,
+    sex,
+    `qPCR swabs (RNA/ml)`,
+    `Histopathological score brain`,
+    #`Histopathological score brain...24`,
+    `% Positive area.y`,
+    Time_Group,
+    Vaccination_Status,
+    `qPCR Brain (RNA/ml)`,
+    #qPCR brain log10,
+    `Live Virus log10 brain`,
+    `Live virus (PFU/mouse) brain`) |>
+  drop_na(`% Positive area.y`)
+
+
+
+
+# Rename for easier plotting
+names(comparison_data_brain) <- c(
+  "manual semiquantification brain",
+  "ID",
+  "sex",
+  "qPCR_swabs",
+  "Histopath_Brain",
+  #"Histopath_Brain_24",
+  "digital quantification brain",
+  "Time_Group",
+  "Vaccination_Status",
+  "qPCR Brain (RNA/ml)",
+  #qPCR brain log10,
+  "Live Virus log10 brain",
+  "Live virus (PFU/mouse) brain")
+
+
+comparison_data_brain
+```
+
+```{r}
+# Correct data from brain not log-ed.
+message("Some values in the qPCR for swabs and Brain (RNA/ml) and Live virus, are converted to log10, therefore ok, while others have a vlaue that is huge and need to be converted.")
+head(comparison_data_brain$qPCR_swabs)
+head(comparison_data_brain$`qPCR Brain (RNA/ml)`)
+head(comparison_data_brain$`Live virus (PFU/mouse) brain`)
+
+```
+```{r}
+message("Tipycally values smaller than 100 are log10 converted...")
+log_candidates <- c("qPCR_swabs","qPCR Brain (RNA/ml)", "Live virus (PFU/mouse) brain")
+for (col in log_candidates) {
+  comparison_data_brain[[col]] <- ifelse(
+    comparison_data_brain[[col]] > 100,
+    log10(comparison_data_brain[[col]]),
+    comparison_data_brain[[col]])}
+
+```
+```{r}
+head(comparison_data_brain$qPCR_swabs)
+min(round(comparison_data_brain$qPCR_swabs[!is.na(comparison_data_brain$qPCR_swabs)],digits = 3))
+max(round(comparison_data_brain$qPCR_swabs[!is.na(comparison_data_brain$qPCR_swabs)],digits = 3))
+min(round(comparison_data_brain$qPCR_swabs,digits = 3))
+head(comparison_data_brain$`qPCR Brain (RNA/ml)`)
+min(round(comparison_data_brain$`qPCR Brain (RNA/ml)`[!is.na(comparison_data_brain$`qPCR Brain (RNA/ml)`)],digits = 5))
+max(round(comparison_data_brain$`qPCR Brain (RNA/ml)`[!is.na(comparison_data_brain$`qPCR Brain (RNA/ml)`)],digits = 5))
+#comparison_data$`qPCR Brain (RNA/ml)`[round(comparison_data$`qPCR Brain (RNA/ml)`[!is.na(comparison_data$`qPCR Brain (RNA/ml)`)],digits = 3) == 68.616]
+#comparison_data$`qPCR Brain (RNA/ml)`[comparison_data$`qPCR Brain (RNA/ml)` == 68.616] found and converted to the real value from Nedim data.
+
+head(comparison_data_brain$`Live virus (PFU/mouse) brain`)
+```
+```{r}
+head(comparison_data_brain)
+dim(comparison_data_brain)
+comparison_data_brain
+```
+
+
+# Reload data lung
+```{r}
+sample_sheet = "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/data/All lungs and brain_cleaned_Dec2025_NK.xlsx"
+sample_sheet_lungs = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 2)
+head(sample_sheet_lungs)
+colnames(sample_sheet_lungs)
+table(sample_sheet_lungs$`ID IVI`,sample_sheet_lungs$`Euthanasia day (dpi)`)
+
+table(sample_sheet_lungs$`Vaccinated (v), none (n)`)
+# sample_sheet_lungs$Euthanasia_day_dpi = gsub(x = sample_sheet_lungs$`Euthanasia day (dpi)`,
+#                                              pattern ="?p\\.v$",
+#                                              replacement = "")
+sample_sheet_lungs$Euthanasia_day_dpi <- as.numeric(sample_sheet_lungs$`Euthanasia day (dpi)`)
+mterm_val <- max(sample_sheet_lungs$Euthanasia_day_dpi)
+
+#sample_sheet_lungs$`Vaccinated (v), none (n)`
+
+message("Add to plot the number of samples such as: n=12")
+
+sample_sheet_lungs <- sample_sheet_lungs  |> dplyr::mutate(
+    # Time group based on euthanasia day
+    Time_Group = case_when(
+      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (0-4 dpi)",
+      Euthanasia_day_dpi >= 5 & Euthanasia_day_dpi <= 7 ~ "Peak of disease (5-7 dpi)",
+      Euthanasia_day_dpi >= 8 & Euthanasia_day_dpi <= mterm_val ~ paste0("Resolution (8-",mterm_val," dpi)"),
+      TRUE ~ "Other"),
+    # Vaccination status
+    Vaccination_Status = if_else(`Vaccinated (v), none (n)` == "n", "n", "v") |> factor())
+
+# Create combined grouping variable
+sample_sheet_lungs <- sample_sheet_lungs  |> dplyr::mutate(
+    Combined_Group = paste(Time_Group, "-", Vaccination_Status)
+  )
+
+table(sample_sheet_lungs$Vaccination_Status)
+
+# Prepare data for comparison
+comparison_data_lung <- sample_sheet_lungs |> 
+  dplyr::select(
+    `Manual Score (0 to 4)`,
+    ID,
+    `qPCR swabs (RNA/ml)`,
+    `Histopathological score`,
+    #`Histopathological score brain...24`,
+    `% Positivity in total parenchyma`,
+    Time_Group,
+    Vaccination_Status,
+    `qPCR Lung (RNA/ml)`,
+    #qPCR brain log10,
+    `Live virus (PFU/ml)`) #|>  drop_na(`% Positive area.y`)
+
+
+
+
+# Rename for easier plotting
+names(comparison_data_lung) <- c(
+  "manual semiquantification lung",
+  "ID",
+  "qPCR_swabs",
+  "Histopath_Lung",
+  #"Histopath_Brain_24",
+  "digital quantification lung",
+  "Time_Group",
+  "Vaccination_Status",
+  "qPCR Lung (RNA/ml)",
+  #qPCR brain log10,
+  "Live virus (PFU/ml)")
+
+
+head(comparison_data_lung)
+dim(comparison_data_lung)
+comparison_data_lung
+
+```
+
+
+
+
+
+## Spearman
+
+# How variables change together? (meassured by correlation)
+
+### Brain manual correlation to digital
+```{r}
+brain_scores <- comparison_data_brain |>
+  dplyr::select(
+    manual = `manual semiquantification brain`,
+    digital = `digital quantification brain`
+  ) |>
+  drop_na()
+
+cor_spearman_brain <- cor(brain_scores$manual, brain_scores$digital,method = "spearman", use = "complete.obs")
+cor_spearman_brain
+```
+
+### Lung manual correlation to digital
+```{r}
+lung_scores <- comparison_data_lung |>
+  dplyr::select(
+    manual = `manual semiquantification lung`,
+    digital = `digital quantification lung`
+  )# |>drop_na()
+
+cor_spearman_lung <- cor(lung_scores$manual, lung_scores$digital,
+                    method = "spearman", use = "complete.obs")
+cor_spearman_lung
+```
+
+```{r}
+write.table(comparison_data_brain,file = paste0(output_dir,"comparison_data_brain.csv"),sep = ",")
+write.table(comparison_data_lung,file = paste0(output_dir,"comparison_data_lung.csv"),sep = ",")
+
+```
+
+
+```{r}
+```
+
+
+
+# CCC
+## Do the manual  and digital quantification agree, and can they be used interchangeably?
+# agreement measures how close the actual values are to one another
+
+
+### Convert the "%" scores from the digital to binary format.
+```{r}
+# Bin the digital scores to match the 0-5 scale
+# Adjust 'breaks' based on your clinical expertise/standard
+brain_scores$digital_binned <- cut(brain_scores$digital,
+                                   #breaks = c(-Inf, 1, 5, 10, 15, 20, Inf),
+                                   breaks = c(-Inf, 10, 30, 50, 70, 90, Inf),
+                                   labels = 0:5,
+                                   include.lowest = TRUE)
+
+
+# Ensure both are numeric or factors for the function
+brain_scores$manual
+brain_scores$digital_binned <- as.numeric(as.character(brain_scores$digital_binned))
+max(brain_scores$digital_binned)
+```
+
+
+```{r}
+#install.packages("DescTools")
+library(DescTools)
+#--> Results :  CCC estimate,accuracy,precision,95% CI
+
+#ccc_result_brain <- CCC(brain_scores$manual, brain_scores$digital)
+ccc_result_brain <- CCC(brain_scores$manual, brain_scores$digital_binned)
+ccc_result_brain
+round(ccc_result_brain$rho.c[,1],3)
+ccc_result_brain$rho.c      # overall CCC
+ccc_result_brain$s.shift    # scale shift
+ccc_result_brain$l.shift    # location shift
+ccc_result_brain$C.b        # accuracy
+```
+### lung 
+
+#convert % to categorical.
+```{r}
+lung_scores$digital_binned <- cut(lung_scores$digital,
+                                   breaks = c(-Inf, 10, 30, 50, 75, 90, Inf),
+                                   labels = 0:5,
+                                   include.lowest = TRUE)
+
+
+# Ensure both are numeric or factors for the function
+lung_scores$manual
+lung_scores$digital_binned <- as.numeric(as.character(lung_scores$digital_binned))
+max(lung_scores$digital_binned)
+```
+
+```{r}
+#install.packages("DescTools")
+library(DescTools)
+#--> Results :  CCC estimate,accuracy,precision,95% CI
+
+#ccc_result_lung <- CCC(lung_scores$manual, lung_scores$digital)
+ccc_result_lung <- CCC(lung_scores$manual, lung_scores$digital_binned)
+ccc_result_lung
+round(ccc_result_lung$rho.c[,1],3)
+ccc_result_lung$rho.c      # overall CCC
+ccc_result_lung$s.shift    # scale shift
+ccc_result_lung$l.shift    # location shift
+ccc_result_lung$C.b        # accuracy
+```
+
+# MI
+#### Will tell you if the methods are related, but it cannot tell you if they are interchangeable. 
+#### High MI just means the digital score is a good "predictor" of the manual score.
+
+## Discrete
+### Brain
+```{r}
+#install.packages("infotheo")
+library(infotheo)
+
+brain_disc <- discretize(brain_scores)
+mi_value_brain_discrete <- mutinformation(brain_disc$manual, brain_disc$digital)
+mi_value_brain_discrete
+
+```
+
+## Discrete
+### Lung
+```{r}
+
+lung_disc <- discretize(lung_scores)
+mi_value_lung_discrete <- mutinformation(lung_disc$manual, lung_disc$digital)
+mi_value_lung_discrete
+
+```
+<!-- ## Continuous -->
+<!-- ### Brain -->
+<!-- ```{r} -->
+<!-- #install.packages("RTransferEntropy") -->
+<!-- library(RTransferEntropy) -->
+
+<!-- mi_knn_brain_continuous <- RTransferEntropy::mi(brain_scores$manual, brain_scores$digital, method = "knn") -->
+<!-- mi_knn_brain_continuous -->
+<!-- ``` -->
+
+<!-- ## Continuous -->
+<!-- ### Lung -->
+<!-- ```{r} -->
+<!-- library(RTransferEntropy) -->
+
+<!-- mi_knn_lung_continuous <- mi(lung_scores$manual, lung_scores$digital, method = "knn") -->
+<!-- mi_knn_lung_continuous -->
+<!-- ``` -->
+
+# Plot 
+## scatterplot with identity line + CCC + Spearman
+### Brain 
+
+### CCC ranges:
+# >0.90 → excellent agreement
+# 0.80–0.90 → good
+# 0.65–0.80 → moderate
+# 0.40–0.65 → fair
+# <0.40 → poor
+# <0.10 → no agreement
+
+
+# Scale shift (s.shift)
+# 1.0 → perfect scale match
+# >1.0 → digital has larger spread
+# <1.0 → manual has larger spread
+
+# measure bias in means
+# 0 → no bias
+# >0.1 → small bias
+# >1.0 → large bias
+
+# Accuracy component C.b
+# 1.0 → perfect accuracy (points lie on 45° line)
+# 0.8–1.0 → good accuracy
+# <0.5 → poor accuracy
+# <0.1 → extremely poor
+
+# Conclusion of not transformed dital scores.
+# The digital brain quantification and manual semiquantification measure related biological phenomena and show reasonable alignment, but they are not interchangeable. 
+# Digital scoring captures more variation, while manual scoring compresses the dynamic range.
+
+# Conclusion of transformed digital scores to categories:
+# The digital scoring values are all very low, falling in one bin all, therefore for this group using the current approach from -Inf,10,30,50,70,90,Inf scales become even more different than
+# if we would not change the scales...
+# Therefore, if we stick to the reality to have the same "Scales" and use transformed for the brain we can not say that the methods are interchangeable.
+
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+
+brain_ccc <- ggplot(brain_scores, aes(x = manual, y = digital_binned)) +
+  geom_jitter(size = 3, alpha = 0.7, color = "#3C1642") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  stat_cor(method = "spearman", label.x =0, label.y = 5,size=5) +
+  annotate("text", 
+           label = paste0("CCC = ", round(ccc_result_brain$rho.c[,1], 3)),
+           x= 0.44,y=4.7,#hjust=-0.3,vjust=3,
+           size=5) +
+  xlim(0,5)+
+  ylim(0,5)+
+  labs(
+    title = "Manual vs Digital Brain Scoring (Binnned)",
+    x = "Manual Semiquantification",
+    y = "Digital Quantification (% Positive Area)",
+    subtitle = paste0("n=",brain_scores |> summarize(n=n())) #lung_scores |> count()
+  ) +
+  theme_bw()
+brain_ccc
+```
+
+# Plot 
+## scatterplot with identity line + CCC + Spearman
+### Lung
+# Manual and digital lung scoring do not agree and cannot be used interchangeably.  
+# The digital method captures far more variation and is on a completely different scale, with large systematic bias relative to manual scoring.
+
+
+# Conclusion of transformed digital scores to categories:
+# The digital scoring values are converted to bins, therefore for this group using the current approach from -Inf,10,30,50,70,90,Inf scales become very informative  than
+# if we would not change the scales...
+# Therefore, if we stick to the reality to have the same "Scales" and use transformed for the lung we can say that the methods are interchangeable.
+
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+
+
+lung_ccc <- ggplot(lung_scores, aes(x = manual, y = digital_binned)) +
+  geom_jitter(size = 3, alpha = 0.7, color = "#FB8500") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  stat_cor(method = "spearman", label.x =0, label.y = 5,size=5) +
+  annotate("text", 
+           label = paste0("CCC = ", round(ccc_result_lung$rho.c[,1], 3)),
+           x=0.44, y=4.7,size=5) +
+  xlim(0,5)+
+  ylim(0,5)+
+  labs(
+    title = "Manual vs Digital Lung Scoring (Binned)",
+    x = "Manual Semiquantification",
+    y = "Digital Quantification (% Positive Area)",
+    subtitle = paste0("n=",lung_scores |> summarize(n=n())) #lung_scores |> count()
+  ) +
+  theme_bw()
+lung_ccc
+```
+
+
+```{r,fig.width=11,fig.height=5}
+# Combine into 2‑panel figure
+two_panel <- ggarrange(brain_ccc, lung_ccc,
+                       ncol = 2,
+                       nrow = 1,
+                       common.legend = FALSE)
+
+two_panel
+
+# Save the two panel plot
+ggsave(paste0(output_dir, "brain_mq_vs_dq_&_lubg_mq_vs_dq_ccc.pdf"), 
+       two_panel, 
+       width = 11, 
+       height = 5, 
+       dpi = 600)
+```
+### Methods.
+```{text}
+Manual and Digital Scoring, Data Transformation, and Agreement Analysis
+
+Manual histopathology scoring for both brain and lung tissues was performed by a trained pathologist using a 0–5 ordinal semiquantitative scale, reflecting increasing severity of inflammation and tissue damage. Digital scoring was obtained from automated image‑analysis pipelines and expressed as the percentage of positively stained tissue area for each sample.
+
+Because the Concordance Correlation Coefficient (CCC) requires both variables to be on comparable measurement scales, the digital scores were treated equally for brain and for lungs.
+
+In brain, the data was converted to categorical using inf,10,30,50,70,90,Inf, to 0:5. Therefore it resumes the same scale as the manual scoring.
+In lung, the data was converted to categorical using inf,10,30,50,70,90,Inf, to 0:5.  Therefore it resumes the same scale as the manual scoring.
+
+However, CCC wants that data is in comparable measurement scales, and if we look in the brain at the digital values, they are never going above 20%, therefore if we make the scale accordingly to the assumptions of the CCC(test), we shall use something like -Inf,1,5,10,15,20,Inf (so now manual scores and digital binarized scores would be comparable) and preserved meaningful biological variation; or in brain directly use continuous digital percentages use without transformation. 
+
+
+
+For lung, digital values exhibited a much wider dynamic range and were not directly comparable to the compressed 0–5 manual scale. To satisfy CCC assumptions, lung digital scores were converted into ordinal categories (0–5) using predefined percentage thresholds, aligning them with the manual scoring scale.
+
+All statistical analyses were performed in R (version 4.x). Data wrangling was conducted using dplyr and tidyr. Agreement between manual and digital scoring was quantified using the Concordance Correlation Coefficient (CCC) implemented in the DescTools package. CCC provides overall concordance (ρc) and its components—accuracy (C.b), scale shift, and location shift—allowing assessment of both precision and bias between methods. Visualization of the results, including scatterplots with identity lines, linear regression fits, and annotated CCC and Spearman correlation values, was performed using ggplot2 and ggpubr.
+
+
+```
+
+
+# Matrix per lung or brain of rest of features.
+### lung
+```{r}
+output_dir <- "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/Results/Lungs/"
+# Function to create correlation matrix plot
+comparison_data_lung$qPCR_swabs <- as.numeric(comparison_data_lung$qPCR_swabs)
+comparison_data_lung$`qPCR Lung (RNA/ml)` <- as.numeric(comparison_data_lung$`qPCR Lung (RNA/ml)`)
+comparison_data_lung$`Live virus (PFU/ml)` <- as.numeric(comparison_data_lung$`Live virus (PFU/ml)`)
+#comparison_data_lung <- comparison_data_lung %>% mutate(across(all_of(correlation_vars_lung), ~ as.numeric(as.character(.x))))
+
+correlation_vars_lung <- c("Histopath_Lung","qPCR_swabs",'qPCR Lung (RNA/ml)','Live virus (PFU/ml)')
+create_correlation_plot <- function(data, group_name,correlation_vars=correlation_vars_lung) {
+  # Select and clean data
+  #n_samples <- length(unique(data$'ID IVI'))
+  #comparison_data_lung |> dplyr::select(Histopath_Lung,qPCR_swabs,`qPCR Lung (RNA/ml)`,`Live virus (PFU/ml)`)
+  n_samples <- data |> dplyr::summarize(n=n())
+
+  cor_data <- data |> dplyr::select(all_of(correlation_vars)) #|> #tidyr::drop_na()
+  
+  
+  if(nrow(cor_data) < 2) {
+    message(paste("Not enough data for group:", group_name))
+    return(NULL)
+  }
+  
+  # Calculate correlation matrix
+  cor_matrix <- cor(cor_data, use = "pairwise.complete.obs", method = "spearman")#pearson
+  
+  # Create plot
+  pdf(paste0(output_dir,"final_correlation_matrix_", gsub("[^A-Za-z0-9]", "_", group_name), ".pdf"),
+      width = 12, height = 10)
+  corrplot::corrplot(cor_matrix, 
+           method = "color",
+           type = "lower",  # Half triangle (lower)
+           tl.col = "black",
+           tl.srt = 45,
+           tl.cex = 0.8,
+           addCoef.col = "black",
+           number.cex = 0.7,
+           col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(200),
+           title = paste("Correlation Matrix -", group_name,"n=",n_samples),
+           mar = c(0, 0, 2, 0))
+  
+  dev.off()
+  
+  return(cor_matrix)
+}
+
+# Generate correlation matrices for each group
+#groups <- unique(sample_sheet_lungs$Combined_Group)
+
+correlation_results <- list()
+# for(group in groups) {
+#   group_data <- sample_sheet_lungs |> dplyr::filter(Combined_Group == group)
+#   correlation_results[[group]] <- create_correlation_plot(data = group_data, group_name = group)
+# }
+# #length(unique(sample_sheet_lungs$`ID IVI`[sample_sheet_lungs$Combined_Group=="Accute (0-4 dpi) - n"]))
+
+# Overall correlation (all data)
+#correlation_results[["Overall"]] <- create_correlation_plot(sample_sheet_lungs, "Overall")
+correlation_results[["Overall"]] <- create_correlation_plot(data = comparison_data_lung, group_name = "Overall", correlation_vars = correlation_vars_lung)
+#length(unique(sample_sheet_lungs$`ID IVI`))
+#dim(sample_sheet_lungs)
+
+# # By vaccination status only
+# for(vac_status in c("n", "v")) {
+#   vac_data <- sample_sheet_lungs |> dplyr::filter(Vaccination_Status == vac_status)
+#   vac_label <- ifelse(vac_status == "v", "Vaccinated", "Non-vaccinated")
+#   correlation_results[[vac_label]] <- create_correlation_plot(vac_data, vac_label)
+# }
+# 
+# # By time group only
+# time_groups <- c("Early (0-4 dpi)", "Resolution (5-7 dpi)", "Clearance (8-15 dpi)")
+# for(time_group in time_groups) {
+#   time_data <- sample_sheet_lungs  |> dplyr::filter(Time_Group == time_group)
+#   correlation_results[[time_group]] <- create_correlation_plot(time_data, time_group)
+# }
+
+```
+
+### brain
+```{r}
+output_dir <- "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/Results/Brains/"
+# Function to create correlation matrix plot
+comparison_data_brain$qPCR_swabs <- as.numeric(comparison_data_brain$qPCR_swabs)
+comparison_data_brain$`qPCR Brain (RNA/ml)` <- as.numeric(comparison_data_brain$`qPCR Brain (RNA/ml)`)
+comparison_data_brain$`Live virus (PFU/mouse) brain` <- as.numeric(comparison_data_brain$`Live virus (PFU/mouse) brain`)
+#comparison_data_brain <- comparison_data_brain %>% mutate(across(all_of(correlation_vars_brain), ~ as.numeric(as.character(.x))))
+
+correlation_vars_brain <- c("Histopath_Brain","qPCR_swabs",'qPCR Brain (RNA/ml)','Live virus (PFU/mouse) brain')
+create_correlation_plot <- function(data, group_name,correlation_vars=correlation_vars_brain) {
+  # Select and clean data
+  #n_samples <- length(unique(data$'ID IVI'))
+  #comparison_data_lung |> dplyr::select(Histopath_Lung,qPCR_swabs,`qPCR Lung (RNA/ml)`,`Live virus (PFU/ml)`)
+  n_samples <- data |> dplyr::summarize(n=n())
+
+  cor_data <- data |> dplyr::select(all_of(correlation_vars)) #|> #tidyr::drop_na()
+  
+  
+  if(nrow(cor_data) < 2) {
+    message(paste("Not enough data for group:", group_name))
+    return(NULL)
+  }
+  
+  # Calculate correlation matrix
+  cor_matrix <- cor(cor_data, use = "pairwise.complete.obs", method = "spearman")#pearson
+  
+  # Create plot
+  pdf(paste0(output_dir,"final_correlation_matrix_", gsub("[^A-Za-z0-9]", "_", group_name), ".pdf"),
+      width = 12, height = 10)
+  corrplot::corrplot(cor_matrix, 
+           method = "color",
+           type = "lower",  # Half triangle (lower)
+           tl.col = "black",
+           tl.srt = 45,
+           tl.cex = 0.8,
+           addCoef.col = "black",
+           number.cex = 0.7,
+           col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(200),
+           title = paste("Correlation Matrix -", group_name,"n=",n_samples),
+           mar = c(0, 0, 2, 0))
+  
+  dev.off()
+  
+  return(cor_matrix)
+}
+
+# Generate correlation matrices for each group#groups <- unique(sample_sheet_lungs$Combined_Group)
+
+correlation_results <- list()
+# for(group in groups) {
+#   group_data <- sample_sheet_lungs |> dplyr::filter(Combined_Group == group)
+#   correlation_results[[group]] <- create_correlation_plot(data = group_data, group_name = group)
+# }
+# #length(unique(sample_sheet_lungs$`ID IVI`[sample_sheet_lungs$Combined_Group=="Accute (0-4 dpi) - n"]))
+
+# Overall correlation (all data)
+#correlation_results[["Overall"]] <- create_correlation_plot(sample_sheet_lungs, "Overall")
+correlation_results[["Overall"]] <- create_correlation_plot(data = comparison_data_brain, group_name = "Overall", correlation_vars = correlation_vars_brain)
+#length(unique(sample_sheet_lungs$`ID IVI`))
+#dim(sample_sheet_lungs)
+
+# # By vaccination status only
+# for(vac_status in c("n", "v")) {
+#   vac_data <- sample_sheet_lungs |> dplyr::filter(Vaccination_Status == vac_status)
+#   vac_label <- ifelse(vac_status == "v", "Vaccinated", "Non-vaccinated")
+#   correlation_results[[vac_label]] <- create_correlation_plot(vac_data, vac_label)
+# }
+# 
+# # By time group only
+# time_groups <- c("Early (0-4 dpi)", "Resolution (5-7 dpi)", "Clearance (8-15 dpi)")
+# for(time_group in time_groups) {
+#   time_data <- sample_sheet_lungs  |> dplyr::filter(Time_Group == time_group)
+#   correlation_results[[time_group]] <- create_correlation_plot(time_data, time_group)
+# }
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Bland altman plot
+```{r}
+#install.packages("BlandAltmanLeh")
+library(BlandAltmanLeh)
+
+bland.altman.plot(
+  brain_scores$manual,
+  brain_scores$digital,
+  main = "Bland–Altman Plot: Manual vs Digital Brain Scores",
+  xlab = "Mean of Manual and Digital",
+  ylab = "Difference (Manual - Digital)"
+)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Check statistical difference between lung vs brain pcr swab
+
+```{r}
+head(comparison_data)
+colnames(comparison_data)
+#qPCR swabs are a meassure that was taken in the animal besides the valoration was done on brain or lungs.
+# Test if the qPCR_swabs got better results for the brain Manual score vs lung Manual score?
+# Test if the qPCR_swabs got better results for the brain AI score vs lung AI score?
+#Does qPCR_swabs correlate better with Manual_score_brain than with Manual_score_lung?
+#Does qPCR_swabs correlate better with Algorithm_Score_brain than with Algorithm_Score_lung?
+
+#install.packages("cocor")
+library("cocor")
+r_brain  <- cor(comparison_data$qPCR_swabs, comparison_data$Manual_score_brain, method="spearman", use = "complete.obs")
+r_lung   <- cor(comparison_data$qPCR_swabs, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+r_brain_lung <- cor(comparison_data$Manual_score_brain, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+n <- nrow(comparison_data)
+n
+
+#qPCR_swabs correlates more strongly with the brain or the lung manual score, and whether that difference is statistically meaningful. The Steiger test is the correct method here because both correlations share the same predictor (qPCR_swabs) and come from the same animals.
+
+res <- cocor.dep.groups.overlap(
+  r.jk = r_brain,
+  r.jh = r_lung,
+  r.kh = r_brain_lung,
+  n = n,  alternative = "two.sided",  test = "steiger1980")
+res
+#The viral load measured in swabs reflects lung disease severity significantly better than brain disease severity.
+#The Steiger test shows p = 0.0003, meaning the difference between the two correlations is highly significant.
+#We compared the association between qPCR_swabs and manual pathology scores in brain and lung using Steiger’s test for dependent correlations. The correlation with lung scores (Spearman r = 0.23) was significantly stronger than the correlation with brain scores (Spearman r = –0.11; Steiger z = –3.63, p = 0.0003). This indicates that swab viral load reflects lung pathology more accurately than brain pathology.
+
+
+#The null hypothesis is:
+#The correlation between qPCR_swabs and the brain score is equal to the correlation between qPCR_swabs and the lung score.
+
+#The test rejects the null hypothesis (p = 0.0003), meaning:
+#The two correlations are not equal.
+#The difference is statistically significant.
+
+#𝑟𝑗𝑘 = correlation between qPCR_swabs and brain score
+#𝑟𝑗ℎ = correlation between qPCR_swabs and lung score
+#SE = standard error adjusted for the fact that both correlations share qPCR_swabs and the two outcomes (brain and lung) are correlated
+#A large absolute z‑value means the two correlations differ more than expected by chance.Your result:
+#𝑧=−3.6255
+# p = 0.0003
+# This means the difference is 3.6 standard deviations away from zero, which is very unlikely to happen by chance.
+
+
+```
+
+
+```{r}
+library("ggpubr")
+
+p1 <- ggscatter(comparison_data, x="qPCR_swabs", y="Manual_score_brain", add="reg.line",color="darkblue") +
+  # Pearson with "P:" prefix
+  ggpubr::stat_cor(method = "pearson",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.97,
+                   aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+  # Spearman with "S:" prefix
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))+
+  labs(title="qPCR_swabs vs Manual Score (Brain)")
+p1
+
+p2 <- ggscatter(comparison_data, x="qPCR_swabs", y="Manual_score_lung", add="reg.line",color="darkred") +
+    # Pearson with "P:" prefix
+  ggpubr::stat_cor(method = "pearson",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.97,
+                   aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+  # Spearman with "S:" prefix
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))+
+  labs(title="qPCR_swabs vs Manual Score (Lung)")
+
+p2  #stat_cor(method="spearman")
+
+
+
+
+steiger_p <- res@steiger1980$p.value
+steiger_z <- res@steiger1980$statistic
+
+# CIs for each correlation (Fisher z) 
+# ci_brain <- cocor::fisherz2r(cocor::fisherz(r_brain) + c(-1, 1) * 1.96 / sqrt(n - 3)) 
+# ci_lung <- cocor::fisherz2r(cocor::fisherz(r_lung) + c(-1, 1) * 1.96 / sqrt(n - 3))
+
+fisher_ci <- function(r, n, conf.level = 0.95) {
+  z  <- 0.5 * log((1 + r) / (1 - r))
+  se <- 1 / sqrt(n - 3)
+  z_crit <- qnorm(1 - (1 - conf.level)/2)
+  lo_z <- z - z_crit * se
+  hi_z <- z + z_crit * se
+  lo_r <- (exp(2 * lo_z) - 1) / (exp(2 * lo_z) + 1)
+  hi_r <- (exp(2 * hi_z) - 1) / (exp(2 * hi_z) + 1)
+  c(lo_r, hi_r)
+}
+
+ci_brain <- fisher_ci(r_brain, n)
+ci_lung  <- fisher_ci(r_lung, n)
+
+
+
+
+df_corr <- data.frame(
+  Tissue = factor(c("Brain", "Lung"), levels = c("Brain", "Lung")),
+  r      = c(r_brain, r_lung),
+  ci_low = c(ci_brain[1], ci_lung[1]),
+  ci_high= c(ci_brain[2], ci_lung[2])
+)
+
+p3_qpcr <- ggplot(df_corr, aes(x = r, y = Tissue, color = Tissue)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey60") +
+  geom_errorbarh(aes(xmin = ci_low, xmax = ci_high), height = 0.2, linewidth = 0.8) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Brain" = "darkblue", "Lung" = "darkred")) +
+  annotate("text",
+           x = min(df_corr$ci_low) - 0.05,
+           y = 1.5,
+           hjust = 0,
+           label = paste0(
+             "Steiger test (dependent correlations)\n",
+             "z = ", round(steiger_z, 2),
+             ", p = ", signif(steiger_p, 3)
+           ),
+           size = 4) +
+  xlim(min(df_corr$ci_low) - 0.1, max(df_corr$ci_high) + 0.1) +
+  theme_bw() +
+  labs(
+    title = "Correlation of qPCR_swabs with Manual Scores",
+    x = "Spearman correlation with qPCR_swabs",
+    y = NULL
+  ) +
+  theme(legend.position = "none")
+
+
+p3_qpcr
+
+
+
+
+# do the same for example to Histophatology scores...
+# do the same for algorithm scores
+plot_list <- list("p1"=p1,"p2"=p2,"p3"=p3_qpcr)
+
+# Select key measures for correlation analysis
+output_dir <- "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/Results/Merged/"
+if (!dir.exists(output_dir)){dir.create(output_dir,recursive = TRUE)}
+
+combined_plot <- ggarrange(
+  plotlist = plot_list, 
+  ncol = 3, 
+  nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+# Add main title
+combined_plot <- annotate_figure(
+  combined_plot,
+  top = text_grob("qPCR_swabs Manual score brain vs Manual score lung", 
+                  face = "bold", size = 12))
+
+# Save the combined plot - Increased height to 8 since you have 2 rows now
+ggsave(paste0(output_dir, "qpcr_swab_brain_vs_lung_manual_score.pdf"), 
+       combined_plot, 
+       width = 11, 
+       height = 5, 
+       dpi = 600) # 1200 is very high; 600 is usually plenty for publication
+
+
+
+```
+
+
+# Manual score correlation in brain and lung to histopathology scores in brain and lung.
+```{r}
+library("cocor")
+r_brain  <- cor(comparison_data$Histopath_Brain, comparison_data$Manual_score_brain, method="spearman", use = "complete.obs")
+r_lung   <- cor(comparison_data$Histopath_Lung, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+r_brain_lung <- cor(comparison_data$Manual_score_brain, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+n <- nrow(comparison_data)
+n
+
+
+res <- cocor.dep.groups.overlap(
+  r.jk = r_brain,
+  r.jh = r_lung,
+  r.kh = r_brain_lung,
+  n = n,  alternative = "two.sided",  test = "steiger1980")
+res
+
+
+library("ggpubr")
+p1 <- ggscatter(comparison_data, x="Histopath_Brain", y="Manual_score_brain", add="reg.line",color="darkblue") +
+  # Pearson with "P:" prefix
+  ggpubr::stat_cor(method = "pearson",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.97,
+                   aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+  # Spearman with "S:" prefix
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))+
+  labs(title="Histopath_Brain vs Manual Score (Brain)")
+p1
+
+p2 <- ggscatter(comparison_data, x="Histopath_Lung", y="Manual_score_lung", add="reg.line",color="darkred") +
+    # Pearson with "P:" prefix
+  ggpubr::stat_cor(method = "pearson",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.97,
+                   aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+  # Spearman with "S:" prefix
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))+
+  labs(title="Histopath_Lung vs Manual Score (Lung)")
+
+p2  #stat_cor(method="spearman")
+
+
+
+
+steiger_p <- res@steiger1980$p.value
+steiger_z <- res@steiger1980$statistic
+
+# CIs for each correlation (Fisher z) 
+# ci_brain <- cocor::fisherz2r(cocor::fisherz(r_brain) + c(-1, 1) * 1.96 / sqrt(n - 3)) 
+# ci_lung <- cocor::fisherz2r(cocor::fisherz(r_lung) + c(-1, 1) * 1.96 / sqrt(n - 3))
+
+fisher_ci <- function(r, n, conf.level = 0.95) {
+  z  <- 0.5 * log((1 + r) / (1 - r))
+  se <- 1 / sqrt(n - 3)
+  z_crit <- qnorm(1 - (1 - conf.level)/2)
+  lo_z <- z - z_crit * se
+  hi_z <- z + z_crit * se
+  lo_r <- (exp(2 * lo_z) - 1) / (exp(2 * lo_z) + 1)
+  hi_r <- (exp(2 * hi_z) - 1) / (exp(2 * hi_z) + 1)
+  c(lo_r, hi_r)
+}
+
+ci_brain <- fisher_ci(r_brain, n)
+ci_lung  <- fisher_ci(r_lung, n)
+
+
+
+
+df_corr <- data.frame(
+  Tissue = factor(c("Brain", "Lung"), levels = c("Brain", "Lung")),
+  r      = c(r_brain, r_lung),
+  ci_low = c(ci_brain[1], ci_lung[1]),
+  ci_high= c(ci_brain[2], ci_lung[2])
+)
+
+p3_his <- ggplot(df_corr, aes(x = r, y = Tissue, color = Tissue)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey60") +
+  geom_errorbarh(aes(xmin = ci_low, xmax = ci_high), height = 0.2, linewidth = 0.8) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Brain" = "darkblue", "Lung" = "darkred")) +
+  annotate("text",
+           x = min(df_corr$ci_low) - 0.05,
+           y = 1.5,
+           hjust = 0,
+           label = paste0(
+             "Steiger test (dependent correlations)\n",
+             "z = ", round(steiger_z, 2),
+             ", p = ", signif(steiger_p, 3)
+           ),
+           size = 4) +
+  xlim(min(df_corr$ci_low) - 0.1, max(df_corr$ci_high) + 0.1) +
+  theme_bw() +
+  labs(
+    title = "Correlation of Histopathology with Manual Scores",
+    x = "Spearman correlation with Histopathology",
+    y = NULL
+  ) +
+  theme(legend.position = "none")
+
+
+p3_his
+
+```
+
+```{r}
+#check that the scores correspond to logtransformed or not.
+comparison_data$
+```
+
+
+# Manual score correlation in brain and lung to live virus PFU RNA/ml in brain and lung.
+```{r}
+library("cocor")
+
+
+comparison_data <- comparison_data |>
+  dplyr::rename(LiveVirusBrain = `Live virus (PFU/mouse) brain`) |> 
+  dplyr::rename(LiveVirusLung = `Live virus (PFU/mouse) lung`)
+
+
+
+
+
+
+# r_brain  <- cor(comparison_data$`Live virus (PFU/mouse) brain`, comparison_data$Manual_score_brain, method="spearman", use = "complete.obs")
+# r_lung   <- cor(comparison_data$`Live virus (PFU/mouse) lung`, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+r_brain  <- cor(comparison_data$LiveVirusBrain, comparison_data$Manual_score_brain, method="spearman", use = "complete.obs")
+r_lung   <- cor(comparison_data$LiveVirusLung, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+r_brain_lung <- cor(comparison_data$Manual_score_brain, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+n <- nrow(comparison_data)
+n
+
+
+
+
+
+res <- cocor.dep.groups.overlap(
+  r.jk = r_brain,
+  r.jh = r_lung,
+  r.kh = r_brain_lung,
+  n = n,  alternative = "two.sided",  test = "steiger1980")
+res
+
+
+library("ggpubr")
+#'Live virus (PFU/mouse) brain'
+#"Manual_score_brain"
+p1 <- ggscatter(data = comparison_data,
+                x="LiveVirusBrain",
+                y="Manual_score_brain",
+                add="reg.line",
+                color="darkblue") +
+  # Pearson with "P:" prefix
+  ggpubr::stat_cor(method = "pearson",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.97,
+                   #parse="FALSE",
+                   aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+  # Spearman with "S:" prefix
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   #parse="FALSE",
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))+
+  labs(title="Live virus (PFU/mouse) brain vs Manual Score (Brain)")
+p1
+
+p2 <- ggscatter(comparison_data, x="LiveVirusLung",
+                y="Manual_score_lung",
+                add="reg.line",
+                color="darkred") +
+    # Pearson with "P:" prefix
+  ggpubr::stat_cor(method = "pearson",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.97,
+                   aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+  # Spearman with "S:" prefix
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))+
+  labs(title="Live virus (PFU/mouse) lung vs Manual Score (Lung)")
+
+p2  #stat_cor(method="spearman")
+
+
+
+
+steiger_p <- res@steiger1980$p.value
+steiger_z <- res@steiger1980$statistic
+
+# CIs for each correlation (Fisher z) 
+# ci_brain <- cocor::fisherz2r(cocor::fisherz(r_brain) + c(-1, 1) * 1.96 / sqrt(n - 3)) 
+# ci_lung <- cocor::fisherz2r(cocor::fisherz(r_lung) + c(-1, 1) * 1.96 / sqrt(n - 3))
+
+fisher_ci <- function(r, n, conf.level = 0.95) {
+  z  <- 0.5 * log((1 + r) / (1 - r))
+  se <- 1 / sqrt(n - 3)
+  z_crit <- qnorm(1 - (1 - conf.level)/2)
+  lo_z <- z - z_crit * se
+  hi_z <- z + z_crit * se
+  lo_r <- (exp(2 * lo_z) - 1) / (exp(2 * lo_z) + 1)
+  hi_r <- (exp(2 * hi_z) - 1) / (exp(2 * hi_z) + 1)
+  c(lo_r, hi_r)
+}
+
+ci_brain <- fisher_ci(r_brain, n)
+ci_lung  <- fisher_ci(r_lung, n)
+
+
+
+
+df_corr <- data.frame(
+  Tissue = factor(c("Brain", "Lung"), levels = c("Brain", "Lung")),
+  r      = c(r_brain, r_lung),
+  ci_low = c(ci_brain[1], ci_lung[1]),
+  ci_high= c(ci_brain[2], ci_lung[2])
+)
+
+p3_vir <- ggplot(df_corr, aes(x = r, y = Tissue, color = Tissue)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey60") +
+  geom_errorbarh(aes(xmin = ci_low, xmax = ci_high), height = 0.2, linewidth = 0.8) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Brain" = "darkblue", "Lung" = "darkred")) +
+  annotate("text",
+           x = min(df_corr$ci_low) - 0.05,
+           y = 1.5,
+           hjust = 0,
+           label = paste0(
+             "Steiger test (dependent correlations)\n",
+             "z = ", round(steiger_z, 2),
+             ", p = ", signif(steiger_p, 3)
+           ),
+           size = 4) +
+  xlim(min(df_corr$ci_low) - 0.1, max(df_corr$ci_high) + 0.1) +
+  theme_bw() +
+  labs(
+    title = "Correlation of Live virus (PFU/mouse) with Manual Scores",
+    x = "Spearman correlation with Live virus (PFU/mouse)",
+    y = NULL
+  ) +
+  theme(legend.position = "none")
+
+
+p3_vir
+```
+
+
+```{r}
+# Combine all six plots
+# Note: plot_list_v2 is a named list; using names(plot_list_v2) ensures all are included
+combined_plot <- ggarrange(plotlist = list(p3_his,p3_qpcr,p3_vir),
+  ncol = 3, 
+  nrow = 1,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+# Add main title
+combined_plot <- annotate_figure(
+  combined_plot,
+  top = text_grob("Brain vs Lung Manual Scores", 
+                  face = "bold", size = 12))
+
+# Save the combined plot - Increased height to 8 since you have 2 rows now
+ggsave(paste0(output_dir, "brain_histopath_qpcr_vir_brain_vs_lung_comparison_v2.pdf"), 
+       combined_plot, 
+       width = 15, 
+       height = 4, 
+       dpi = 600) # 1200 is very high; 600 is usually plenty for publication
+```
+
+
+# Now do the same for the rest of values.
+```{r}
+# Manual score correlation in brain and lung to live virus PFU RNA/ml in brain and lung.
+```
+
+
+
+```{r}
+library("cocor")
+
+comparison_data <- comparison_data |>
+  dplyr::rename(LiveVirusBrain = `Live virus (PFU/mouse) brain`) |> 
+  dplyr::rename(LiveVirusLung = `Live virus (PFU/mouse) lung`)
+
+
+
+
+
+
+# r_brain  <- cor(comparison_data$`Live virus (PFU/mouse) brain`, comparison_data$Manual_score_brain, method="spearman", use = "complete.obs")
+# r_lung   <- cor(comparison_data$`Live virus (PFU/mouse) lung`, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+r_brain  <- cor(comparison_data$LiveVirusBrain, comparison_data$Manual_score_brain, method="spearman", use = "complete.obs")
+r_lung   <- cor(comparison_data$LiveVirusLung, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+r_brain_lung <- cor(comparison_data$Manual_score_brain, comparison_data$Manual_score_lung, method="spearman", use = "complete.obs")
+n <- nrow(comparison_data)
+n
+
+
+
+
+
+res <- cocor.dep.groups.overlap(
+  r.jk = r_brain,
+  r.jh = r_lung,
+  r.kh = r_brain_lung,
+  n = n,  alternative = "two.sided",  test = "steiger1980")
+res
+
+
+library("ggpubr")
+#'Live virus (PFU/mouse) brain'
+#"Manual_score_brain"
+p1 <- ggscatter(data = comparison_data,
+                x="LiveVirusBrain",
+                y="Manual_score_brain",
+                add="reg.line",
+                color="darkblue") +
+  # Pearson with "P:" prefix
+  ggpubr::stat_cor(method = "pearson",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.97,
+                   #parse="FALSE",
+                   aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+  # Spearman with "S:" prefix
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   #parse="FALSE",
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))+
+  labs(title="Live virus (PFU/mouse) brain vs Manual Score (Brain)")
+p1
+
+p2 <- ggscatter(comparison_data, x="LiveVirusLung",
+                y="Manual_score_lung",
+                add="reg.line",
+                color="darkred") +
+    # Pearson with "P:" prefix
+  ggpubr::stat_cor(method = "pearson",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.97,
+                   aes(label = paste0("P: ", after_stat(r.label), ", ", after_stat(p.label)))) +
+  # Spearman with "S:" prefix
+  ggpubr::stat_cor(method = "spearman",
+                   output.type = "text", 
+                   label.x.npc = "left", 
+                   label.y.npc = 0.87,
+                   aes(label = paste0("S: ", after_stat(r.label), ", ", after_stat(p.label))))+
+  labs(title="Live virus (PFU/mouse) lung vs Manual Score (Lung)")
+
+p2  #stat_cor(method="spearman")
+
+
+
+
+steiger_p <- res@steiger1980$p.value
+steiger_z <- res@steiger1980$statistic
+
+# CIs for each correlation (Fisher z) 
+# ci_brain <- cocor::fisherz2r(cocor::fisherz(r_brain) + c(-1, 1) * 1.96 / sqrt(n - 3)) 
+# ci_lung <- cocor::fisherz2r(cocor::fisherz(r_lung) + c(-1, 1) * 1.96 / sqrt(n - 3))
+
+fisher_ci <- function(r, n, conf.level = 0.95) {
+  z  <- 0.5 * log((1 + r) / (1 - r))
+  se <- 1 / sqrt(n - 3)
+  z_crit <- qnorm(1 - (1 - conf.level)/2)
+  lo_z <- z - z_crit * se
+  hi_z <- z + z_crit * se
+  lo_r <- (exp(2 * lo_z) - 1) / (exp(2 * lo_z) + 1)
+  hi_r <- (exp(2 * hi_z) - 1) / (exp(2 * hi_z) + 1)
+  c(lo_r, hi_r)
+}
+
+ci_brain <- fisher_ci(r_brain, n)
+ci_lung  <- fisher_ci(r_lung, n)
+
+
+
+
+df_corr <- data.frame(
+  Tissue = factor(c("Brain", "Lung"), levels = c("Brain", "Lung")),
+  r      = c(r_brain, r_lung),
+  ci_low = c(ci_brain[1], ci_lung[1]),
+  ci_high= c(ci_brain[2], ci_lung[2])
+)
+
+p3_vir <- ggplot(df_corr, aes(x = r, y = Tissue, color = Tissue)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey60") +
+  geom_errorbarh(aes(xmin = ci_low, xmax = ci_high), height = 0.2, linewidth = 0.8) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Brain" = "darkblue", "Lung" = "darkred")) +
+  annotate("text",
+           x = min(df_corr$ci_low) - 0.05,
+           y = 1.5,
+           hjust = 0,
+           label = paste0(
+             "Steiger test (dependent correlations)\n",
+             "z = ", round(steiger_z, 2),
+             ", p = ", signif(steiger_p, 3)
+           ),
+           size = 4) +
+  xlim(min(df_corr$ci_low) - 0.1, max(df_corr$ci_high) + 0.1) +
+  theme_bw() +
+  labs(
+    title = "Correlation of Live virus (PFU/mouse) with Manual Scores",
+    x = "Spearman correlation with Live virus (PFU/mouse)",
+    y = NULL
+  ) +
+  theme(legend.position = "none")
+
+
+p3_vir
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+
+## STATISTICS
+```{r}
+# ============================================================================
+# STATISTICS BY GROUP
+# ============================================================================
+
+# Calculate correlation statistics for each group
+group_correlations <- comparison_data  |> 
+  group_by(Time_Group, Vaccination_Status) |> 
+  summarise(
+    n_samples = n(),
+    cor_lung = cor(Algorithm_Score, Histopath_Lung, use = "complete.obs", method="spearman"),
+    cor_brain_23 = cor(Algorithm_Score, Histopath_Brain_23, use = "complete.obs", method="spearman"),
+    #cor_brain_24 = cor(Algorithm_Score, Histopath_Brain_24, use = "complete.obs", method="spearman"), # add any other
+    .groups = "drop"
+  )
+
+# Save results to CSV
+write.csv(group_correlations, paste0(output_dir,"correlation_statistics_by_group.csv"), row.names = FALSE)
+
+# Print summary
+cat("\n=== CORRELATION SUMMARY ===\n")
+cat(sprintf("\nOverall Correlations (Algorithm vs Manual Scores):\n"))
+cat(sprintf("  Lung:      r = %.3f\n", cor_lung))
+cat(sprintf("  Brain (23): r = %.3f\n", cor_brain_23))
+#cat(sprintf("  Brain (24): r = %.3f\n", cor_brain_24))
+
+cat("\n=== CORRELATIONS BY GROUP ===\n")
+print(group_correlations)
+
+```
+
+
+```{r}
+```
+
+
+## VISUALIZATION by Group
+```{r}
+# ============================================================================
+# ADDITIONAL VISUALIZATION: FACETED BY GROUP
+# ============================================================================
+
+# Create faceted plots
+faceted_lung <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Lung)) +
+  geom_point(aes(color = Vaccination_Status, shape=sex), size = 2, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 0.5) +
+  facet_wrap(~Time_Group, scales = "free") +
+  labs(
+    title = "Histopathological Score Lung vs Algorithm (by Time Group)",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Lung"
+  ) +
+  theme_bw() +
+  stat_cor(method = "pearson", size = 3)
+
+ggsave("histopath_lung_faceted.pdf", faceted_lung, width = 14, height = 6, dpi = 1200)
+
+faceted_brain_23 <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Brain_23)) +
+  geom_point(aes(color = Vaccination_Status, shape=sex), size = 2, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black",linewidth = 0.5) +
+  facet_wrap(~Time_Group, scales = "free") +
+  labs(
+    title = "Histopathological Score Brain (23) vs Algorithm (by Time Group)",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Brain (23)"
+  ) +
+  theme_bw() +
+  stat_cor(method = "pearson", size = 3)
+
+ggsave(paste0("histopath_brain_23_faceted.pdf"), faceted_brain_23, width = 14, height = 6, dpi = 1200)
+
+# faceted_brain_24 <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Brain_24)) +
+#   geom_point(aes(color = Vaccination_Status), size = 2, alpha = 0.6) +
+#   geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 0.5) +
+#   facet_wrap(~Time_Group, scales = "free") +
+#   labs(
+#     title = "Histopathological Score Brain (24) vs Algorithm (by Time Group)",
+#     x = "% Positive Area (Algorithm)",
+#     y = "Histopathological Score Brain (24)"
+#   ) +
+#   theme_bw() +
+#   stat_cor(method = "pearson", size = 3)
+
+# ggsave(paste0(output_dir,"histopath_brain_24_faceted.pdf", faceted_brain_24, width = 14, height = 6, dpi = 1200)
+```
+```{r}
+message("Done")
+```
+```{r}
+
+```
+
+

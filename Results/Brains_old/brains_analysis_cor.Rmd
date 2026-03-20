@@ -1,0 +1,393 @@
+---
+title: "Nedim Mice Brain Correlation Analysis"
+output: html_notebook
+---
+
+# Packages 
+```{r}
+#library("BiocManager")
+rm(list = ls(all.names = TRUE))
+gc()
+#.libPaths("/home/mbotos/R/x86_64-pc-linux-gnu-library/"4.2"/")
+```
+
+
+
+```{r}
+.libPaths(,c("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/"))
+#unloadNamespace("limma")
+```
+
+```{r}
+# BiocManager::install(c("dorothea"),force=TRUE,ask = TRUE)
+# library("dorothea")
+library("BiocManager")
+library("dplyr")
+library("tidyr")
+#unloadNamespace("edgeR")
+#unloadNamespace("limma")
+#library("edgeR")
+library("ggplot2")
+library("ggrepel")
+library("svglite")
+library("biomaRt")
+library("corrplot")
+#install.packages("ggpubr")
+library("ggpubr")
+library("gridExtra")
+```
+
+## Read excel file
+```{r}
+sample_sheet = "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/data/All lungs and brain_cleaned_Dec2025_NK.xlsx"
+sample_sheet_sheet_4_brain = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 4)
+head(sample_sheet_sheet_4_brain)
+colnames(sample_sheet_sheet_4_brain)
+
+
+sample_sheet_sheet_6_brain = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 6)
+head(sample_sheet_sheet_6_brain)
+colnames(sample_sheet_sheet_6_brain)
+
+sample_sheet_sheet_4_brain_coi <- sample_sheet_sheet_4_brain  |> dplyr::select(ID,`ID IVI`,`% Positive area`)
+colnames(sample_sheet_sheet_4_brain_coi)
+colnames(sample_sheet_sheet_6_brain)
+
+# Need to merge colun % Positive Area from sheet 4 with Brain to plot sheet 6
+sample_sheet_sheet_6_brain <- sample_sheet_sheet_6_brain |> dplyr::rename("ID"="ID...39")
+sample_sheet_brain <- sample_sheet_sheet_6_brain |> dplyr::left_join(sample_sheet_sheet_4_brain_coi ,by = "ID")#c("ID...1"="ID"))
+
+head(sample_sheet_brain$`% Positive area.y`)
+
+#sample_sheets = sample_sheets[,-1]  # Skip first column
+```
+
+## Make groups for animals
+### Early (0-4)
+### Resolution (5-14)
+### Clearanace (15-35)
+
+```{r}
+
+
+table(sample_sheet_brain$`ID IVI.x`,sample_sheet_brain$`Euthanasia day (dpi)`)
+sample_sheet_brain$Euthanasia_day_dpi = gsub(x = sample_sheet_brain$`Euthanasia day (dpi)`,
+                                             pattern ="?p\\.v$",
+                                             replacement = "")
+sample_sheet_brain$Euthanasia_day_dpi <- as.numeric(sample_sheet_brain$Euthanasia_day_dpi)
+  
+
+message("using latest day of euthanasia day")
+multima_day <- max(sample_sheet_brain$Euthanasia_day_dpi)
+
+sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(
+    # Time group based on euthanasia day
+    Time_Group = case_when(
+      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Accute (0-4 dpi)",
+      Euthanasia_day_dpi >= 5 & Euthanasia_day_dpi <= 14 ~ "Resolution (5-14 dpi)",
+      Euthanasia_day_dpi >= 15 & Euthanasia_day_dpi <= multima_day  ~ "Clearance (15-35 dpi)",
+      TRUE ~ "Other"),
+    # Vaccination status
+    Vaccination_Status = factor(`Vaccinated (v), none (n)`, levels = c("n", "v"))
+  )
+
+# Create combined grouping variable
+sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(
+    Combined_Group = paste(Time_Group, "-", Vaccination_Status)
+  )
+
+```
+
+```{r}
+# Select key measures for correlation analysis
+output_dir <- "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/Results/Brains/"
+Mergecorrelation_vars <- c(
+  "Histopathological score lung",
+  "Histopathological score brain...23",
+  "qPCR swabs log10",
+  "qPCR Lung (RNA/ml)",
+  "qPCR Brain (RNA/ml)",
+  "qPCR brain log10",
+  "Live Virus log10 brain",
+  "Live Virus log10 lung",
+  "% Positive area.y"
+)
+
+# Function to create correlation matrix plot
+create_correlation_plot <- function(data, group_name,correlation_vars=Mergecorrelation_vars) {
+  # Select and clean data
+  cor_data <- data |> dplyr::select(all_of(correlation_vars)) #|> #tidyr::drop_na()
+  
+  if(nrow(cor_data) < 2) {
+    message(paste("Not enough data for group:", group_name))
+    return(NULL)
+  }
+  
+  # Calculate correlation matrix
+  cor_matrix <- cor(cor_data, use = "pairwise.complete.obs", method = "spearman")#pearson
+  
+  # Create plot
+  pdf(paste0(output_dir,"correlation_matrix_", gsub("[^A-Za-z0-9]", "_", group_name), ".pdf"),
+      width = 12, height = 10)
+  
+  corrplot::corrplot(cor_matrix, 
+           method = "color",
+           type = "lower",  # Half triangle (lower)
+           tl.col = "black",
+           tl.srt = 45,
+           tl.cex = 0.8,
+           addCoef.col = "black",
+           number.cex = 0.7,
+           col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(200),
+           title = paste("Correlation Matrix -", group_name),
+           mar = c(0, 0, 2, 0))
+  
+  dev.off()
+  
+  return(cor_matrix)
+}
+
+# Generate correlation matrices for each group
+groups <- unique(sample_sheet_brain$Combined_Group)
+
+correlation_results <- list()
+for(group in groups) {
+  group_data <- sample_sheet_brain |> dplyr::filter(Combined_Group == group)
+  correlation_results[[group]] <- create_correlation_plot(data = group_data, group_name = group)
+}
+
+# Overall correlation (all data)
+correlation_results[["Overall"]] <- create_correlation_plot(sample_sheet_brain, "Overall")
+
+# By vaccination status only
+for(vac_status in c("n", "v")) {
+  vac_data <- sample_sheet_brain |> dplyr::filter(Vaccination_Status == vac_status)
+  vac_label <- ifelse(vac_status == "v", "Vaccinated", "Non-vaccinated")
+  correlation_results[[vac_label]] <- create_correlation_plot(vac_data, vac_label)
+}
+
+# By time group only
+time_groups <- c("Early (0-5 dpi)", "Resolution (6-7 dpi)", "Clearance (8-18 dpi)")
+for(time_group in time_groups) {
+  time_data <- sample_sheet_brain  |> dplyr::filter(Time_Group == time_group)
+  correlation_results[[time_group]] <- create_correlation_plot(time_data, time_group)
+}
+
+
+```
+
+
+# COMPARATIVE ANALYSIS: HISTOPATHOLOGICAL SCORES VS % POSITIVE AREA
+```{r}
+# ============================================================================
+# COMPARATIVE ANALYSIS: HISTOPATHOLOGICAL SCORES VS % POSITIVE AREA
+# ============================================================================
+sample_sheet_brain$sex <- as.factor(toupper(sample_sheet_brain$sex))
+
+# Prepare data for comparison
+comparison_data <- sample_sheet_brain |> 
+  dplyr::select(
+    ID,
+    sex,
+    `Histopathological score lung`,
+    `Histopathological score brain...23`,
+    #`Histopathological score brain...24`,
+    `% Positive area.y`,
+    Time_Group,
+    Vaccination_Status
+  ) |> 
+  drop_na(`% Positive area.y`)
+
+
+
+
+# Rename for easier plotting
+names(comparison_data) <- c(
+  "ID",
+  "sex",
+  "Histopath_Lung",
+  "Histopath_Brain_23",
+  #"Histopath_Brain_24",
+  "Algorithm_Score",
+  "Time_Group",
+  "Vaccination_Status"
+)
+
+# Calculate correlations for each measure
+cor_lung <- cor(comparison_data$Algorithm_Score, comparison_data$Histopath_Lung, use = "complete.obs", method="spearman")
+cor_brain_23 <- cor(comparison_data$Algorithm_Score, comparison_data$Histopath_Brain_23, use = "complete.obs", method="spearman")
+#cor_brain_24 <- cor(comparison_data$Algorithm_Score, comparison_data$Histopath_Brain_24, use = "complete.obs", method="spearman")
+
+# Create individual plots
+plot_lung <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Lung)) +
+  geom_point(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkblue", linetype = "dashed") +
+  labs(
+    title = "Histopathological Score Lung vs Algorithm",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Lung",
+    subtitle = sprintf("Spearman r = %.3f", cor_lung)
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11)
+  ) +
+  ggpubr::stat_cor(method = "spearman", label.x.npc = 0.1, label.y.npc = 0.95)#pearson
+
+plot_brain_23 <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Brain_23)) +
+  geom_point(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred", linetype = "dashed") +
+  labs(
+    title = "Histopathological Score Brain (23) vs Algorithm",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Brain (23)",
+    subtitle = sprintf("Spearman r = %.3f", cor_brain_23)
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 11)
+  ) +
+  stat_cor(method = "spearman", label.x.npc = 0.1, label.y.npc = 0.95)
+# 
+# plot_brain_24 <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Brain_24)) +
+#   geom_point(aes(color = Time_Group, shape = Vaccination_Status), size = 3, alpha = 0.7) +
+#   geom_smooth(method = "lm", se = TRUE, color = "darkgreen", linetype = "dashed") +
+#   labs(
+#     title = "Histopathological Score Brain (24) vs Algorithm",
+#     x = "% Positive Area (Algorithm)",
+#     y = "Histopathological Score Brain (24)",
+#     subtitle = sprintf("Spearman r = %.3f", cor_brain_24)
+#   ) +
+#   theme_bw(base_size = 12) +
+#   theme(
+#     legend.position = "bottom",
+#     plot.title = element_text(face = "bold", size = 14),
+#     plot.subtitle = element_text(size = 11)
+#   ) +
+#   stat_cor(method = "spearman", label.x.npc = 0.1, label.y.npc = 0.95)
+
+# Combine all three plots into one figure
+combined_plot <- ggarrange(
+  plot_lung, 
+  plot_brain_23, 
+  #plot_brain_24,
+  ncol = 1, 
+  nrow = 2,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+# Add main title
+combined_plot <- annotate_figure(
+  combined_plot,
+  top = text_grob("Algorithm Performance vs Manual Histopathological Scores", 
+                  face = "bold", size = 16)
+)
+
+# Save the combined plot
+ggsave(paste0(output_dir,"histopath_vs_algorithm_comparison.pdf"), 
+       combined_plot, 
+       width = 10, 
+       height = 9, 
+       dpi = 1200)
+
+```
+
+## STATISTICS
+```{r}
+# ============================================================================
+# STATISTICS BY GROUP
+# ============================================================================
+
+# Calculate correlation statistics for each group
+group_correlations <- comparison_data  |> 
+  group_by(Time_Group, Vaccination_Status) |> 
+  summarise(
+    n_samples = n(),
+    cor_lung = cor(Algorithm_Score, Histopath_Lung, use = "complete.obs", method="spearman"),
+    cor_brain_23 = cor(Algorithm_Score, Histopath_Brain_23, use = "complete.obs", method="spearman"),
+    #cor_brain_24 = cor(Algorithm_Score, Histopath_Brain_24, use = "complete.obs", method="spearman"), # add any other
+    .groups = "drop"
+  )
+
+# Save results to CSV
+write.csv(group_correlations, paste0(output_dir,"correlation_statistics_by_group.csv"), row.names = FALSE)
+
+# Print summary
+cat("\n=== CORRELATION SUMMARY ===\n")
+cat(sprintf("\nOverall Correlations (Algorithm vs Manual Scores):\n"))
+cat(sprintf("  Lung:      r = %.3f\n", cor_lung))
+cat(sprintf("  Brain (23): r = %.3f\n", cor_brain_23))
+#cat(sprintf("  Brain (24): r = %.3f\n", cor_brain_24))
+
+cat("\n=== CORRELATIONS BY GROUP ===\n")
+print(group_correlations)
+
+```
+
+
+```{r}
+```
+
+
+## VISUALIZATION by Group
+```{r}
+# ============================================================================
+# ADDITIONAL VISUALIZATION: FACETED BY GROUP
+# ============================================================================
+
+# Create faceted plots
+faceted_lung <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Lung)) +
+  geom_point(aes(color = Vaccination_Status, shape=sex), size = 2, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 0.5) +
+  facet_wrap(~Time_Group, scales = "free") +
+  labs(
+    title = "Histopathological Score Lung vs Algorithm (by Time Group)",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Lung"
+  ) +
+  theme_bw() +
+  stat_cor(method = "pearson", size = 3)
+
+ggsave("histopath_lung_faceted.pdf", faceted_lung, width = 14, height = 6, dpi = 1200)
+
+faceted_brain_23 <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Brain_23)) +
+  geom_point(aes(color = Vaccination_Status, shape=sex), size = 2, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black",linewidth = 0.5) +
+  facet_wrap(~Time_Group, scales = "free") +
+  labs(
+    title = "Histopathological Score Brain (23) vs Algorithm (by Time Group)",
+    x = "% Positive Area (Algorithm)",
+    y = "Histopathological Score Brain (23)"
+  ) +
+  theme_bw() +
+  stat_cor(method = "pearson", size = 3)
+
+ggsave(paste0("histopath_brain_23_faceted.pdf"), faceted_brain_23, width = 14, height = 6, dpi = 1200)
+
+# faceted_brain_24 <- ggplot(comparison_data, aes(x = Algorithm_Score, y = Histopath_Brain_24)) +
+#   geom_point(aes(color = Vaccination_Status), size = 2, alpha = 0.6) +
+#   geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 0.5) +
+#   facet_wrap(~Time_Group, scales = "free") +
+#   labs(
+#     title = "Histopathological Score Brain (24) vs Algorithm (by Time Group)",
+#     x = "% Positive Area (Algorithm)",
+#     y = "Histopathological Score Brain (24)"
+#   ) +
+#   theme_bw() +
+#   stat_cor(method = "pearson", size = 3)
+
+# ggsave(paste0(output_dir,"histopath_brain_24_faceted.pdf", faceted_brain_24, width = 14, height = 6, dpi = 1200)
+```
+```{r}
+message("Done")
+```
+```{r}
+
+```
+
+

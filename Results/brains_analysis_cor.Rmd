@@ -1116,7 +1116,7 @@ lung_ccc <- ggplot(lung_scores, aes(x = manual, y = digital_binned)) +
   annotate("text", 
            label = paste0("CCC = ", round(ccc_result_lung$rho.c[,1], 3)),
            x=0.44, y=4.7,size=5) +
-  xlim(0,5)+
+  xlim(0,4)+
   ylim(0,5)+
   labs(
     title = "Manual vs Digital Lung Scoring (Binned)",

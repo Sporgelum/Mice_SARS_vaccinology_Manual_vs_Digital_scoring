@@ -6,11 +6,6 @@ This is the CCC analysis notebook, divided in two main parts *Brain* and *Lung*
 It starts by Brain, loading the data, cleaning and merging the data, transforming the corresponding columns for the analysis and finding the best comparable scales among manual score [0-4] to digital scores (%), where in Brain we have a max of 20% while in Lung we have a max of 60%. Therefore, using a comparable scale to meet the assumptions for the CCC analysis, we will establish.
 For *Brain* [0-4] corresponding to (-Inf,0,5,10,15,20,Inf)(%), while for *Lung* [0-4] we will establish to (-Inf,15,30,45,60,Inf)(%)
 # Load libraries
-```{r}
-library(ggplot2)
-library(ggpubr)
-library(dplyr)
-```
 
 
 ```{r}
@@ -19,6 +14,19 @@ rm(list = ls(all.names = TRUE))
 output_dir <- "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/Results/CCC/"
 if (!dir.exists(output_dir)){dir.create(output_dir,recursive = TRUE)}
 ```
+
+
+```{r}
+.libPaths("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/")
+library("ggplot2")
+library("ggpubr")
+library("dplyr")
+library("tidyr")
+library("DescTools")
+library("infotheo")
+```
+
+
 
 
 ## Reload brain data 
@@ -93,7 +101,7 @@ comparison_data_brain <- sample_sheet_brain |>
     #qPCR brain log10,
     `Live Virus log10 brain`,
     `Live virus (PFU/mouse) brain`) |>
-  drop_na(`% Positive area.y`)
+  tidyr::drop_na(`% Positive area.y`)
 
 
 
@@ -208,7 +216,7 @@ ggplot(brain_scores, aes(x = manual, y = digital)) +
 ```
 
 
-```{r}
+```{r warning=FALSE}
 # Brain correlatios scores manual to digital by time group and vaccination status.
 brain_scores_cor_brain <- list()
 for (vs in brain_scores$vaccination_status){
@@ -219,6 +227,14 @@ brain_scores_cor_brain
 ```
 
 ```{r}
+# Get number of samples per group
+n_by_group <- brain_scores |>
+      #dplyr::filter(!is.na(.data[[plt]]), .data[[plt]] != "") |>
+      dplyr::group_by(time_group,vaccination_status) |>
+      dplyr::summarise(n = dplyr::n(), .groups = "drop")
+n_by_group
+
+# Plot
 ggplot(brain_scores, aes(x = manual, y = digital)) +
   #geom_point(aes(color = time_group), size = 3, alpha = 0.7) +
   geom_jitter(aes(color = time_group), size = 3, alpha = 0.7) +
@@ -231,6 +247,8 @@ ggplot(brain_scores, aes(x = manual, y = digital)) +
     label.y.npc = "top",
     aes(label = paste0("S = ", after_stat(r.label),
                        "\nP = ", after_stat(p.label)))) +
+  geom_text(data = n_by_group,aes(x = -Inf, y = Inf, label = paste0("n = ", n)),
+            hjust = -0.1, vjust = 1.2, size = 3) +
   facet_grid(vaccination_status ~ time_group) +
   labs(title = "Manual vs Digital Brain Scores",
     x = "Manual semiquantification (brain)",
@@ -239,8 +257,6 @@ ggplot(brain_scores, aes(x = manual, y = digital)) +
   theme(legend.position = "none",
     strip.text = element_text(size = 10, face = "bold"))
 ```
-
-
 
 
 # MI
@@ -268,31 +284,145 @@ mi_value_brain_discrete
 
 
 ### 3.Convert the "%" scores from the digital to binary format.
+
 ```{r}
-# Bin the digital scores to match the 0-5 scale
-# Adjust 'breaks' based on your clinical expertise/standard
-brain_scores$digital_binned <- cut(brain_scores$digital,
-                                   #breaks = c(-Inf, 1, 5, 10, 15, 20, Inf),
-                                   breaks = c(-Inf, 5, 10, 15, 20, Inf),
-                                   labels = 0:4,
-                                   include.lowest = TRUE)
+# Convert the digital to bins using 
+library("rpart")
+#BiocManager::install("rpart.plot")
+library("rpart.plot")
+
+#rpart() fits a CART model (Classification And Regression Trees).
+# If digital < 0.056 → predict manual = 0
+# Else if digital < 0.468 → predict manual = 2
+# Else if digital < 4.569 → predict manual = 3
+# Else → predict manual = 4
+
+table(brain_scores$manual)
+fit <- rpart(manual ~ digital, data = brain_scores)
+fit
+cutpoints <- sort(unique(fit$splits[, "index"]))
+cutpoints
+
+# Now change the only one sample with vlaue 1 to 0.
+brain_scores$manual_collapsed <- ifelse(brain_scores$manual == 1, 0, brain_scores$manual)
+brain_scores$manual_collapsed <- factor(brain_scores$manual_collapsed)
+table(brain_scores$manual_collapsed)
+fit2 <- rpart(manual_collapsed ~ digital, data = brain_scores)
+fit2
+#rpart.plot::rpart.plot(fit2)
+#rpart.plot(fit2)
+
+pdf(paste0(output_dir,"digital_score_cutpoints_rtree.pdf"))
+rpart.plot(fit2)
+dev.off()
 
 
-# Ensure both are numeric or factors for the function
-brain_scores$manual
-brain_scores$digital_binned <- as.numeric(as.character(brain_scores$digital_binned))
-max(brain_scores$digital_binned)
+#fit2$splits
+predicted_digital_scores <- predict(fit2, newdata = data.frame(digital=brain_scores$digital), type = "class")
+cutpoints_df <- data.frame(binned_digital_scores_rtree=predicted_digital_scores,true_label_digital_score_brain=brain_scores$digital)
+write.table(cutpoints_df,paste0(output_dir,"cutpoints_digital_score_rtree.csv"),sep = ",")
+cutpoints2 <- sort(unique(fit2$splits[, "index"]))
+cutpoints2
+brain_scores$digital_tree_binned <- cut(brain_scores$digital,
+                                        breaks = c(-Inf, cutpoints2, Inf),
+                                        labels = c(0,2,3,4),
+                                        include.lowest = TRUE)
+
+table(manual = brain_scores$manual_collapsed,
+      digital = brain_scores$digital_tree_binned)
+```
+## kappa test, not really used..
+```{r}
+#BiocManager::install("psych")
+library("psych")
+psych::cohen.kappa(cbind(brain_scores$manual_collapsed, brain_scores$digital_tree_binned))#,weights = "quadratic")
+
+
 ```
 
 
 ```{r}
+# Bin the digital scores to match the 0-5 scale
+# Adjust 'breaks' based on your clinical expertise/standard and avoid arbitrary binning or use as above rpart?
+message("use this if we want to set the cutpoints of the scores manually")
+# brain_scores$digital_binned <- cut(brain_scores$digital,
+#                                    #breaks = c(-Inf, 1, 5, 10, 15, 20, Inf),
+#                                    breaks = c(-Inf, 5, 10, 15, 20, Inf),
+#                                    labels = 0:4,
+#                                    include.lowest = TRUE)
+
+
+message('run from here to use the rpart cuts done to the data, rather than using our "bins"')
+# Ensure both are numeric or factors for the function
+brain_scores$manual
+brain_scores$manual_collapsed
+#brain_scores$digital_binned <- as.numeric(as.character(brain_scores$digital_binned))
+brain_scores$manual_collapsed <- as.numeric(as.character(brain_scores$manual_collapsed))
+brain_scores$digital_tree_binned <- as.numeric(as.character(brain_scores$digital_tree_binned))
+#max(brain_scores$digital_binned)
+max(brain_scores$digital_tree_binned)
+```
+
+
+```{r warning=FALSE}
 #install.packages("DescTools")
-library(DescTools)
+library("DescTools")
 #--> Results :  CCC estimate,accuracy,precision,95% CI
 
 #ccc_result_brain <- CCC(brain_scores$manual, brain_scores$digital)
 #for status_vaccinated in brain_scores
-ccc_result_brain <- CCC(brain_scores$manual, brain_scores$digital_binned)
+
+ccc_brain_scores_stratified <- list()
+for (vs in brain_scores$vaccination_status){
+  for (tg in brain_scores$time_group){
+    df <- brain_scores |> dplyr::filter(vaccination_status == vs & time_group == tg)
+    
+    ccc_score <- CCC(df$manual_collapsed,df$digital_tree_binned)
+    ccc_brain_scores_stratified[[paste0(vs)]][[paste0(tg)]] <- round(ccc_result_brain$rho.c[,1],3)}}
+
+ccc_brain_scores_stratified
+```
+### plot brains ccc stratified
+```{r}
+# add CCC score to each group..
+#ccc_stratified_scores <- ccc_brain_scores_stratified
+ccc_brains_df <- do.call(rbind,
+                  lapply(names(ccc_brain_scores_stratified), function(vs) {data.frame(
+                    vaccination_status = vs,
+                    time_group = names(ccc_brain_scores_stratified[[vs]]),
+                    ccc_score = unlist(ccc_brain_scores_stratified[[vs]]),
+                    row.names = NULL,
+                    stringsAsFactors = FALSE)}))
+
+
+
+
+#ccc_by_group <- ccc_brain_scores_stratified
+brain_ccc_strat <- ggplot(brain_scores, aes(x = manual_collapsed, y = digital_tree_binned)) +
+  geom_jitter(size = 3, alpha = 0.7, color = "#3C1642") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  stat_cor(method = "spearman", label.x =0, label.y = 5,size=5) +
+  #annotate("text", label = paste0("CCC = ", round(ccc_result_brain$rho.c[,1], 3)), x= 0.44,y=3.7,#hjust=-0.3,vjust=3,  size=5) +
+  geom_text(data = ccc_brains_df,aes(x = -Inf, y = Inf, label = paste0("CCC = ", ccc_score)),
+            hjust = -0.1, vjust = 1.2, size = 3) +
+  facet_grid(vaccination_status ~ time_group) +
+  xlim(0,4)+
+  ylim(0,4)+
+  labs(
+    title = "Manual vs Digital Brain Scoring",
+    x = "Manual Semiquantification",
+    y = "Digital Quantification (% Positive Area-Binnned)",
+    subtitle = paste0("n=",brain_scores |> summarize(n=n())) #lung_scores |> count()
+  ) +
+  theme_bw()
+brain_ccc_strat
+```
+
+
+```{r warning=FALSE}
+#ccc_result_brain <- CCC(brain_scores$manual, brain_scores$digital_binned)
+ccc_result_brain <- CCC(brain_scores$manual_collapsed, brain_scores$digital_tree_binned)
 ccc_result_brain
 round(ccc_result_brain$rho.c[,1],3)
 ccc_result_brain$rho.c      # overall CCC
@@ -307,7 +437,8 @@ write.table(comparison_data_brain,file = paste0(output_dir,"comparison_data_brai
 
 
 ```{r}
-brain_ccc <- ggplot(brain_scores, aes(x = manual, y = digital_binned)) +
+#brain_ccc <- ggplot(brain_scores, aes(x = manual, y = digital_binned)) +
+brain_ccc <- ggplot(brain_scores, aes(x = manual_collapsed, y = digital_tree_binned)) +
   geom_jitter(size = 3, alpha = 0.7, color = "#3C1642") +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
   geom_smooth(method = "lm", se = TRUE, color = "black") +
@@ -319,9 +450,9 @@ brain_ccc <- ggplot(brain_scores, aes(x = manual, y = digital_binned)) +
   xlim(0,4)+
   ylim(0,4)+
   labs(
-    title = "Manual vs Digital Brain Scoring (Binnned)",
+    title = "Manual vs Digital Brain Scoring",
     x = "Manual Semiquantification",
-    y = "Digital Quantification (% Positive Area)",
+    y = "Digital Quantification (% Positive Area-Binnned)",
     subtitle = paste0("n=",brain_scores |> summarize(n=n())) #lung_scores |> count()
   ) +
   theme_bw()
@@ -448,6 +579,14 @@ ggplot(lung_scores, aes(x = manual, y = digital)) +
 ```
 
 ```{r}
+# Get number of samples per group
+n_by_group <- lung_scores |>
+      #dplyr::filter(!is.na(.data[[plt]]), .data[[plt]] != "") |>
+      dplyr::group_by(time_group,vaccination_status) |>
+      dplyr::summarise(n = dplyr::n(), .groups = "drop")
+n_by_group
+
+
 ggplot(lung_scores, aes(x = manual, y = digital)) +
   geom_jitter(aes(color = time_group), size = 3, alpha = 0.7) +
   geom_smooth(aes(color = time_group), method = "lm", se = FALSE) +
@@ -459,6 +598,8 @@ ggplot(lung_scores, aes(x = manual, y = digital)) +
     label.y.npc = "top",
     aes(label = paste0("S = ", after_stat(r.label),
                        "\nP = ", after_stat(p.label)))) +
+  geom_text(data = n_by_group,aes(x = -Inf, y = Inf, label = paste0("n = ", n)),
+            hjust = -0.1, vjust = 1.2, size = 3) +
   
   facet_grid(vaccination_status ~ time_group) +
   labs(title = "Manual vs Digital Lung Scores",

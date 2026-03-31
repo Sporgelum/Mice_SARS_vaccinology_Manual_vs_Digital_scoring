@@ -14,26 +14,33 @@ gc()
 
 
 ```{r}
-.libPaths(,c("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/"))
+#.libPaths("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/") --> wil create lock files as tries to sync because of one drive..
+
+#.libPaths(,c())
+.libPaths()
+.libPaths("E:/R/R-4.4.0/library")
+
 ```
 
 ```{r}
 # BiocManager::install(c("dorothea"),force=TRUE,ask = TRUE)
 # library("dorothea")
+#install.packages(c("rlang", "ggrepel", "ggpubr", "corrplot", "biomaRt","svglite", "gridExtra", "dplyr"))
+
 library("BiocManager")
-library("dplyr")
 library("tidyr")
 #unloadNamespace("edgeR")
 #unloadNamespace("limma")
 #library("edgeR")
 library("ggplot2")
-library("ggrepel")
+#library("ggrepel")
 library("svglite")
-library("biomaRt")
+#library("biomaRt")
 library("corrplot")
 #install.packages("ggpubr")
 library("ggpubr")
 library("gridExtra")
+library("dplyr")
 ```
 
 ## Read excel file
@@ -67,7 +74,7 @@ message("Add n=12")
 sample_sheet_lungs <- sample_sheet_lungs  |> dplyr::mutate(
     # Time group based on euthanasia day
     Time_Group = case_when(
-      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (0-4 dpi)",
+      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (1-4 dpi)",
       Euthanasia_day_dpi >= 5 & Euthanasia_day_dpi <= 7 ~ "Peak of disease (5-7 dpi)",
       Euthanasia_day_dpi >= 8 & Euthanasia_day_dpi <= mterm_val ~ paste0("Resolution (8-",mterm_val," dpi)"),
       TRUE ~ "Other"),
@@ -167,7 +174,7 @@ for(vac_status in c("n", "v")) {
 }
 
 # By time group only
-time_groups <- c("Early (0-4 dpi)", "Resolution (5-7 dpi)", "Clearance (8-15 dpi)")
+time_groups <- c("Early (1-4 dpi)", "Resolution (5-7 dpi)", "Clearance (8-15 dpi)")
 for(time_group in time_groups) {
   time_data <- sample_sheet_lungs  |> dplyr::filter(Time_Group == time_group)
   correlation_results[[time_group]] <- create_correlation_plot(time_data, time_group)
@@ -302,9 +309,9 @@ head(comparison_data$Vaccination_Status)
 # Create individual plots
 #for (plt in names(scores_vs_manual_vs_ai)){
 plot_list_v2 <- list()
-comparison_data$qPCR_Lung
-comparison_data$qPCR_swabs
-comparison_data$Live_virus
+#comparison_data$qPCR_Lung
+#comparison_data$qPCR_swabs
+#comparison_data$Live_virus
 
 
 plot_values <- c("Histopathological score", "qPCR swabs (RNA/ml)", "qPCR Lung (RNA/ml)", "Live Virus (PFU/ml)")
@@ -324,6 +331,17 @@ for (j in x_axes) {
       dplyr::summarise(n = dplyr::n_distinct(ID), .groups = "drop")
 
     subtitle_text <- paste(paste0("n(", n_by_group$Vaccination_Status, ")=", n_by_group$n),collapse = "   ")
+    
+    
+    #plt="Histopathological score"
+    #plt ="qPCR swabs (RNA/ml)"
+    # There are different number of animals according per group
+    n_by_t_group <- comparison_data |>
+      dplyr::filter(!is.na(.data[[plt]]), .data[[plt]] != "") |>
+      dplyr::group_by(Time_Group) |>
+      dplyr::summarise(n = dplyr::n_distinct(ID), .groups = "drop")
+    
+    legend_text <- paste(paste0("n(", n_by_t_group$Time_Group, ")=", n_by_t_group$n),collapse = "\n")
 
     # Decide whether to log-transform 
     #y_var <- if (plt == "Histopath_Brain") { .data[[plt]] } else { log10(.data[[plt]]) }
@@ -341,9 +359,9 @@ for (j in x_axes) {
            x = gsub("_", " ", j),                          # Dynamic X label
            y = if (plt == "Histopath_Brain") plt else paste0("log10 - ", plt), #qPCR_Lung is already log10ed
            #subtitle = paste0("n=",n_samples)) +
-           subtitle = subtitle_text) +
-      {if (j == "manual semiquantification lung") {xlim(0, 5)} else {NULL}} +
-      facet_wrap(~ Vaccination_Status) +   #horizontal stack
+           subtitle = paste0(subtitle_text,"\n",legend_text))  +
+      #{if (j == "manual semiquantification lung") {xlim(0, 5)} else {NULL}} +
+      #facet_wrap(~ Vaccination_Status) +   #horizontal stack
       theme_bw(base_size = 10) +
       theme(legend.position = "bottom",
             plot.title = element_text(face = "bold", size = 10),
@@ -384,13 +402,153 @@ combined_plot <- annotate_figure(
                   face = "bold", size = 10))
 
 # Save the combined plot - Increased height to 8 since you have 2 rows now
-ggsave(paste0(output_dir, "lung_histopath_vs_digital_comparison_v6_log10.pdf"), 
+ggsave(paste0(output_dir, "lung_histopath_vs_digital_comparison_v8_log10.pdf"), 
        combined_plot, 
        width = 9, 
        height = 16, 
        dpi = 600) # 1200 is very high; 600 is usually plenty for publication
 message("In lung, values are already log 10 transformed for qPCR swab, qPCR Lung and Live virus")
 ```
+```{r}
+
+```
+
+# Matrix plot of features
+### lung
+```{r}
+library("Hmisc")
+#BiocManager::install("Hmisc")
+output_dir <- "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/Results/Lungs/"
+# Function to create correlation matrix plot
+comparison_data
+comparison_data$`qPCR swabs (RNA/ml)` <- as.numeric(comparison_data$`qPCR swabs (RNA/ml)`)
+comparison_data$`qPCR Lung (RNA/ml)` <- as.numeric(comparison_data$`qPCR Lung (RNA/ml)`)
+comparison_data$`Live Virus (PFU/ml)`<- as.numeric(comparison_data$`Live Virus (PFU/ml)`)
+#comparison_data_brain <- comparison_data_brain %>% mutate(across(all_of(correlation_vars_brain), ~ as.numeric(as.character(.x))))
+
+correlation_vars_lung <- c("Histopathological score","qPCR swabs (RNA/ml)",'qPCR Lung (RNA/ml)','Live Virus (PFU/ml)')
+create_correlation_plot <- function(data, group_name,correlation_vars=correlation_vars_lung) {
+  # Select and clean data
+  #n_samples <- length(unique(data$'ID IVI'))
+  #comparison_data_lung |> dplyr::select(Histopath_Lung,qPCR_swabs,`qPCR Lung (RNA/ml)`,`Live virus (PFU/ml)`)
+  n_samples <- data |> dplyr::summarize(n=n())
+
+  
+  #cor_data <- data |> dplyr::select(all_of(correlation_vars)) #|> #tidyr::drop_na()
+  cor_data <- data |> 
+    dplyr::select(all_of(correlation_vars)) |> 
+    dplyr::mutate(across(everything(), as.numeric)) |> 
+    tidyr::drop_na()
+
+  
+  # Select numeric columns only
+  cor_data <- data[, correlation_vars]
+  cor_data <- cor_data[, sapply(cor_data, is.numeric), drop = FALSE]
+  
+  if(nrow(cor_data) < 2) {
+    message(paste("Not enough data for group:", group_name))
+    return(NULL)
+  }
+  
+  # Calculate correlation matrix
+  cor_matrix <- cor(cor_data, use = "pairwise.complete.obs", method = "spearman")#pearson
+  
+  cor_test <- Hmisc::rcorr(as.matrix(cor_data), type = "spearman")
+  p_matrix <- cor_test$P
+
+  
+  # Clean names to avoid corrplot internal errors
+  colnames(cor_matrix) <- make.names(colnames(cor_matrix))
+  rownames(cor_matrix) <- make.names(rownames(cor_matrix))
+  colnames(p_matrix)   <- make.names(colnames(p_matrix))
+  rownames(p_matrix)   <- make.names(rownames(p_matrix))
+  # Create plot
+  pdf(paste0(output_dir,"lung_final_correlation_matrix_", gsub("[^A-Za-z0-9]", "_", group_name), "_v7.pdf"),
+      width = 6.5, height = 4.5)
+  corrplot::corrplot(cor_matrix, 
+                     method = "color",#"circle",#
+                     type = "lower",
+                     tl.col = "black",
+                     tl.srt = 45,
+                     tl.cex = 0.8,
+                     addCoef.col = "black",
+                     number.cex=0.7,
+                     col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(200),
+                     #significance
+                     p.mat=p_matrix,
+                     sig.level = 0.05,
+                     insig = c("label_sig"),
+                     pch.col = "black",
+                     pch.cex = 1,
+                     
+                     
+                     # clustering
+                     order="alphabet",
+                     hclust.method="complete",
+                     
+                     title = paste("Correlation Matrix -", group_name,"n=",n_samples),
+                     mar = c(0, 0, 2, 0))
+  
+  dev.off()
+  
+  return(cor_matrix)
+}
+
+# Generate correlation matrices for each group#groups <- unique(sample_sheet_lungs$Combined_Group)
+
+correlation_results <- list()
+# for(group in groups) {
+#   group_data <- sample_sheet_lungs |> dplyr::filter(Combined_Group == group)
+#   correlation_results[[group]] <- create_correlation_plot(data = group_data, group_name = group)
+# }
+# #length(unique(sample_sheet_lungs$`ID IVI`[sample_sheet_lungs$Combined_Group=="Accute (0-4 dpi) - n"]))
+
+# Overall correlation (all data)
+#correlation_results[["Overall"]] <- create_correlation_plot(sample_sheet_lungs, "Overall")
+correlation_results[["Overall"]] <- create_correlation_plot(data = comparison_data, group_name = "Overall", correlation_vars = correlation_vars_lung)
+#length(unique(sample_sheet_lungs$`ID IVI`))
+#dim(sample_sheet_lungs)
+
+# # By vaccination status only
+# for(vac_status in c("n", "v")) {
+#   vac_data <- sample_sheet_lungs |> dplyr::filter(Vaccination_Status == vac_status)
+#   vac_label <- ifelse(vac_status == "v", "Vaccinated", "Non-vaccinated")
+#   correlation_results[[vac_label]] <- create_correlation_plot(vac_data, vac_label)
+# }
+# 
+# # By time group only
+# time_groups <- c("Early (0-4 dpi)", "Resolution (5-7 dpi)", "Clearance (8-15 dpi)")
+# for(time_group in time_groups) {
+#   time_data <- sample_sheet_lungs  |> dplyr::filter(Time_Group == time_group)
+#   correlation_results[[time_group]] <- create_correlation_plot(time_data, time_group)
+# }
+```
+
+
+
+
+# Continue from here in CCC
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ## STATISTICS

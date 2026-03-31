@@ -17,7 +17,8 @@ if (!dir.exists(output_dir)){dir.create(output_dir,recursive = TRUE)}
 
 
 ```{r}
-.libPaths("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/")
+#.libPaths("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/")
+#BiocManager::install(c("DescTools","infotheo"))
 library("ggplot2")
 library("ggpubr")
 library("dplyr")
@@ -55,6 +56,9 @@ head(sample_sheet_brain$`% Positive area.y`)
 
 table(sample_sheet_brain$`Vaccinated (v), none (n)`)
 table(sample_sheet_brain$`ID IVI.x`,sample_sheet_brain$`Euthanasia day (dpi)`)
+unique(sample_sheet_brain$`Euthanasia day (dpi)`)
+sample_sheet_brain <- sample_sheet_brain %>% dplyr::filter(!`Euthanasia day (dpi)` %in% c("7 p.v","6 p.v"))
+
 
 sample_sheet_brain$Euthanasia_day_dpi = gsub(x = sample_sheet_brain$`Euthanasia day (dpi)`,
                                              pattern ="?p\\.v$",
@@ -68,7 +72,7 @@ multima_day <- max(sample_sheet_brain$Euthanasia_day_dpi)
 sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(
     # Time group based on euthanasia day
     Time_Group = case_when(
-      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (0-4 dpi)",
+      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (1-4 dpi)",
       Euthanasia_day_dpi >= 5 & Euthanasia_day_dpi <= 7 ~ "Peak of disease (5-7 dpi)",
       Euthanasia_day_dpi >= 8 & Euthanasia_day_dpi <= multima_day  ~ paste0("Resolution (8-",multima_day," dpi)"),
       TRUE ~ "Other"),
@@ -200,7 +204,7 @@ cor_spearman_brain
 ```
 
 ```{r}
-ggplot(brain_scores, aes(x = manual, y = digital)) +
+cor_brain_non_stratified <- ggplot(brain_scores, aes(x = manual, y = digital)) +
   geom_point(size = 3, alpha = 0.7, color = "darkblue") +
   geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
   ggpubr::stat_cor(
@@ -213,6 +217,11 @@ ggplot(brain_scores, aes(x = manual, y = digital)) +
     x = "Manual semiquantification (brain)",
     y = "Digital quantification (brain)") +
   theme_bw(base_size = 10)
+cor_brain_non_stratified
+ggsave(paste0(output_dir,"cor_brain_non_stratified.pdf"),
+       cor_brain_non_stratified,
+       width = 6.5,
+       height = 4.5)
 ```
 
 
@@ -288,7 +297,7 @@ mi_value_brain_discrete
 ```{r}
 # Convert the digital to bins using 
 library("rpart")
-#BiocManager::install("rpart.plot")
+#BiocManager::install(c("rpart","rpart.plot"))
 library("rpart.plot")
 
 #rpart() fits a CART model (Classification And Regression Trees).
@@ -313,7 +322,7 @@ fit2
 #rpart.plot::rpart.plot(fit2)
 #rpart.plot(fit2)
 
-pdf(paste0(output_dir,"digital_score_cutpoints_rtree.pdf"))
+pdf(paste0(output_dir,"brain_digital_score_cutpoints_rtree.pdf"))
 rpart.plot(fit2)
 dev.off()
 
@@ -321,7 +330,7 @@ plotcp(fit)
 #fit2$splits
 predicted_digital_scores <- predict(fit2, newdata = data.frame(digital=brain_scores$digital), type = "class")
 cutpoints_df <- data.frame(binned_digital_scores_rtree=predicted_digital_scores,true_label_digital_score_brain=brain_scores$digital)
-write.table(cutpoints_df,paste0(output_dir,"cutpoints_digital_score_rtree.csv"),sep = ",")
+write.table(cutpoints_df,paste0(output_dir,"brain_cutpoints_digital_score_rtree.csv"),sep = ",")
 cutpoints2 <- sort(unique(fit2$splits[, "index"]))
 cutpoints2
 brain_scores$digital_tree_binned <- cut(brain_scores$digital,
@@ -379,7 +388,7 @@ for (vs in brain_scores$vaccination_status){
     df <- brain_scores |> dplyr::filter(vaccination_status == vs & time_group == tg)
     
     ccc_score <- CCC(df$manual_collapsed,df$digital_tree_binned)
-    ccc_brain_scores_stratified[[paste0(vs)]][[paste0(tg)]] <- round(ccc_result_brain$rho.c[,1],3)}}
+    ccc_brain_scores_stratified[[paste0(vs)]][[paste0(tg)]] <- round(ccc_score$rho.c[,1],3)}}
 
 ccc_brain_scores_stratified
 ```
@@ -494,7 +503,7 @@ message("Add to plot the number of samples such as: n=12")
 sample_sheet_lungs <- sample_sheet_lungs  |> dplyr::mutate(
     # Time group based on euthanasia day
     Time_Group = case_when(
-      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (0-4 dpi)",
+      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (1-4 dpi)",
       Euthanasia_day_dpi >= 5 & Euthanasia_day_dpi <= 7 ~ "Peak of disease (5-7 dpi)",
       Euthanasia_day_dpi >= 8 & Euthanasia_day_dpi <= mterm_val ~ paste0("Resolution (8-",mterm_val," dpi)"),
       TRUE ~ "Other"),
@@ -564,7 +573,7 @@ cor_spearman_lung
 ```
 
 ```{r}
-ggplot(lung_scores, aes(x = manual, y = digital)) +
+cor_lung_non_stratified <- ggplot(lung_scores, aes(x = manual, y = digital)) +
   geom_jitter(size = 3, alpha = 0.7, color = "darkorange") +
   geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
   ggpubr::stat_cor(
@@ -577,6 +586,12 @@ ggplot(lung_scores, aes(x = manual, y = digital)) +
     x = "Manual semiquantification (lung)",
     y = "Digital quantification (lung)") +
   theme_bw(base_size = 10)
+
+cor_lung_non_stratified
+ggsave(paste0(output_dir,"cor_lung_non_stratified.pdf"),
+       cor_lung_non_stratified,
+       width = 6.5,
+       height = 4.5)
 ```
 
 ```{r}
@@ -646,6 +661,7 @@ mi_value_lung_discrete
 table(lung_scores$manual)
 fit <- rpart(manual ~ digital, data = lung_scores)
 fit
+
 cutpoints <- sort(unique(fit$splits[, "index"]))
 cutpoints
 
@@ -703,7 +719,7 @@ for (vs in lung_scores$vaccination_status){
     df <- lung_scores |> dplyr::filter(vaccination_status == vs & time_group == tg)
     
     ccc_score <- CCC(df$manual,df$digital_tree_binned)
-    ccc_lung_scores_stratified[[paste0(vs)]][[paste0(tg)]] <- round(ccc_result_lung$rho.c[,1],3)}}
+    ccc_lung_scores_stratified[[paste0(vs)]][[paste0(tg)]] <- round(ccc_score$rho.c[,1],3)}}
 
 ccc_lung_scores_stratified
 ```
@@ -779,7 +795,7 @@ lung_ccc
 
 ```{r,fig.width=11,fig.height=5}
 # Combine into 2‑panel figure
-two_panel <- ggarrange(brain_ccc, lung_ccc,
+two_panel <- ggarrange(lung_ccc,brain_ccc,
                        ncol = 2,
                        nrow = 1,
                        common.legend = FALSE)
@@ -789,8 +805,8 @@ two_panel
 # Save the two panel plot
 ggsave(paste0(output_dir, "brain_mq_vs_dq_&_lubg_mq_vs_dq_ccc.pdf"), 
        two_panel, 
-       width = 11, 
-       height = 5, 
+       width = 13, 
+       height = 4.5, 
        dpi = 600)
 ```
 

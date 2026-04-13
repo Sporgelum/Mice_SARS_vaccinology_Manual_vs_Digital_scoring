@@ -15,7 +15,7 @@ gc()
 
 ```{r}
 #.libPaths(,c("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/"))
-#.libPaths("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/")
+.libPaths("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/")
 #unloadNamespace("limma")
 ```
 
@@ -29,9 +29,9 @@ library("tidyr")
 #unloadNamespace("limma")
 #library("edgeR")
 library("ggplot2")
-#library("ggrepel")
+library("ggrepel")
 library("svglite")
-#library("biomaRt")
+library("biomaRt")
 library("corrplot")
 #install.packages("ggpubr")
 library("ggpubr")
@@ -63,12 +63,6 @@ head(sample_sheet_brain$`% Positive area.y`)
 
 #sample_sheets = sample_sheets[,-1]  # Skip first column
 ```
-```{r}
-sample_sheet_brain$`Euthanasia day (dpi)`
-```
-
-
-
 # Add lung AI % score.
 ```{r}
 sample_sheet = "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/data/All lungs and brain_cleaned_Dec2025_NK.xlsx"
@@ -101,18 +95,11 @@ table(sample_sheet_brain$ID...1,sample_sheet_brain$Tissue.y) # --> Clearly telli
 table(sample_sheet_brain$`Vaccinated (v), none (n)`)
 table(sample_sheet_brain$`ID IVI.x`,sample_sheet_brain$`Euthanasia day (dpi).x`)
 
-# remove samples with death post vaccination before challenge.
-dim(sample_sheet_brain)  
-unique(sample_sheet_brain$`Euthanasia day (dpi).x`)
-unique(sample_sheet_brain$`Euthanasia day (dpi).y`)
-sample_sheet_brain <- sample_sheet_brain %>% dplyr::filter(!`Euthanasia day (dpi).x` %in% c("7 p.v","6 p.v"))
-
-
 sample_sheet_brain$Euthanasia_day_dpi = gsub(x = sample_sheet_brain$`Euthanasia day (dpi).x`,
                                              pattern ="?p\\.v$",
                                              replacement = "")
 sample_sheet_brain$Euthanasia_day_dpi <- as.numeric(sample_sheet_brain$Euthanasia_day_dpi)
-dim(sample_sheet_brain)  
+  
 
 message("using latest day of euthanasia day")
 multima_day <- max(sample_sheet_brain$Euthanasia_day_dpi)
@@ -120,7 +107,7 @@ multima_day <- max(sample_sheet_brain$Euthanasia_day_dpi)
 sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(
     # Time group based on euthanasia day
     Time_Group = case_when(
-      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (1-4 dpi)",
+      Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (0-4 dpi)",
       Euthanasia_day_dpi >= 5 & Euthanasia_day_dpi <= 7 ~ "Peak of disease (5-7 dpi)",
       Euthanasia_day_dpi >= 8 & Euthanasia_day_dpi <= multima_day  ~ paste0("Resolution (8-",multima_day," dpi)"),
       TRUE ~ "Other"),
@@ -132,7 +119,9 @@ sample_sheet_brain <- sample_sheet_brain |> mutate( Vaccination_Status = case_wh
 
 table(sample_sheet_brain$Vaccination_Status)
 # Create combined grouping variable
-sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(Combined_Group = paste0(Time_Group, "-", Vaccination_Status))
+sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(
+    Combined_Group = paste0(Time_Group, "-", Vaccination_Status)
+  )
 
 ```
 
@@ -435,7 +424,6 @@ comparison_data$`manual semiquantification lung`
 
 ```{r}
 comparison_data$Vaccination_Status
-table(comparison_data$Vaccination_Status)
 ```
 ```{r}
 message("Some values in the qPCR for swabs and Brain (RNA/ml) and Live virus, are converted to log10, therefore ok, while others have a vlaue that is huge and need to be converted.")
@@ -483,7 +471,6 @@ comparison_data$`manual semiquantification brain` <- dplyr::recode(
 )
 
 comparison_data$`manual semiquantification brain`
-table(comparison_data$`manual semiquantification brain`)
 ```
 
 ```{r}
@@ -593,12 +580,6 @@ for (j in x_axes) {
 
     subtitle_text <- paste(paste0("n(", n_by_group$Vaccination_Status, ")=", n_by_group$n),collapse = "   ")
     
-    n_by_t_group <- comparison_data |>
-      dplyr::filter(!is.na(.data[[plt]]), .data[[plt]] != "") |>
-      dplyr::group_by(Time_Group) |>
-      dplyr::summarise(n = dplyr::n_distinct(ID), .groups = "drop")
-    
-    legend_text <- paste(paste0("n(", n_by_t_group$Time_Group, ")=", n_by_t_group$n),collapse = "\n")
     
     #plot_list_v2[[plot_key]] <- ggplot(comparison_data, aes(x = .data[[j]], y = log10(.data[[plt]]))) +
     plot_list_v2[[plot_key]] <- ggplot(comparison_data, aes(x = .data[[j]], y = .data[[plt]])) +
@@ -608,7 +589,7 @@ for (j in x_axes) {
            x = gsub("_", " ", j),                          # Dynamic X label
            y = if (plt == "Histopath_Brain") plt else paste0("log10 - ", plt),
            #subtitle = paste0("n=",n_samples)) +
-           subtitle = paste0(subtitle_text,"\n",legend_text))  +
+           subtitle = subtitle_text) +
       {if (j == "manual semiquantification brain") {xlim(0, 4)} else {NULL}} +
       #facet_wrap(~ Vaccination_Status) +   #horizontal stack
       theme_bw(base_size = 10) +
@@ -651,7 +632,7 @@ combined_plot <- annotate_figure(
                   face = "bold", size = 10))
 
 # Save the combined plot - Increased height to 8 since you have 2 rows now
-ggsave(paste0(output_dir, "brain_histopath_vs_digital_comparison_v8_log10.pdf"), 
+ggsave(paste0(output_dir, "brain_histopath_vs_digital_comparison_v7_log10.pdf"), 
        combined_plot, 
        width = 9, 
        height = 16, 
@@ -672,76 +653,68 @@ comparison_data$`qPCR Brain (RNA/ml)` <- as.numeric(comparison_data$`qPCR Brain 
 comparison_data$`Live virus (PFU/mouse) brain` <- as.numeric(comparison_data$`Live virus (PFU/mouse) brain`)
 #comparison_data_brain <- comparison_data_brain %>% mutate(across(all_of(correlation_vars_brain), ~ as.numeric(as.character(.x))))
 
-correlation_vars_brain <- c(
-  "Histopath_Brain",
-  "qPCR_swabs",
-  "qPCR Brain (RNA/ml)",
-  "Live virus (PFU/mouse) brain")
-
-create_correlation_plot <- function(data, group_name, correlation_vars = correlation_vars_brain) {
-  
-  # Count samples
-  n_samples <- nrow(data)
-  
-  # Select numeric variables
-  cor_data <- data |> 
-    dplyr::select(all_of(correlation_vars)) |> 
-    dplyr::mutate(across(everything(), as.numeric)) |> 
-    tidyr::drop_na()
+correlation_vars_brain <- c("Histopath_Brain","qPCR_swabs",'qPCR Brain (RNA/ml)','Live virus (PFU/mouse) brain')
+create_correlation_plot <- function(data, group_name,correlation_vars=correlation_vars_brain) {
+  # Select and clean data
+  #n_samples <- length(unique(data$'ID IVI'))
+  #comparison_data_lung |> dplyr::select(Histopath_Lung,qPCR_swabs,`qPCR Lung (RNA/ml)`,`Live virus (PFU/ml)`)
+  n_samples <- data |> dplyr::summarize(n=n())
 
   
-  if (nrow(cor_data) < 2) {
+  cor_data <- data |> dplyr::select(all_of(correlation_vars)) #|> #tidyr::drop_na()
+  
+  # Select numeric columns only
+  cor_data <- data[, correlation_vars]
+  cor_data <- cor_data[, sapply(cor_data, is.numeric), drop = FALSE]
+  
+  if(nrow(cor_data) < 2) {
     message(paste("Not enough data for group:", group_name))
     return(NULL)
   }
   
-  # Correlation + p-values
-  cor_matrix <- cor(cor_data, use = "pairwise.complete.obs", method = "spearman")
-  cor_test   <- Hmisc::rcorr(as.matrix(cor_data), type = "spearman")
-  p_matrix   <- cor_test$P
+  # Calculate correlation matrix
+  cor_matrix <- cor(cor_data, use = "pairwise.complete.obs", method = "spearman")#pearson
   
-  # Clean names for corrplot
-  clean_names <- make.names(colnames(cor_matrix))
-  colnames(cor_matrix) <- clean_names
-  rownames(cor_matrix) <- clean_names
-  colnames(p_matrix)   <- clean_names
-  rownames(p_matrix)   <- clean_names
+  cor_test <- Hmisc::rcorr(as.matrix(cor_data), type = "spearman")
+  p_matrix <- cor_test$P
+
   
-  # Output file
-  pdf(paste0(output_dir, "brain_final_correlation_matrix_", 
-           gsub("[^A-Za-z0-9]", "_", group_name), "_v7.pdf"),
-    width = 6.5, height = 4.5)
-  
-  corrplot::corrplot(
-    cor_matrix,
-    method = "color",
-    type = "lower",
-    tl.col = "black",
-    tl.srt = 45,
-    tl.cex = 0.8,
-    addCoef.col = "black",
-    number.cex = 0.7,
-    col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(200),
-    
-    # significance
-    p.mat = p_matrix,
-    sig.level = 0.05,
-    insig = "label_sig",
-    pch.col = "black",
-    pch.cex = 1,
-    
-    # clustering
-    order = "alphabet",
-    hclust.method = "complete",
-    
-    # title
-    title = paste0("Correlation Matrix – ", group_name, " (n=", n_samples, ")"),
-    mar = c(0, 0, 3, 0))
+  # Clean names to avoid corrplot internal errors
+  colnames(cor_matrix) <- make.names(colnames(cor_matrix))
+  rownames(cor_matrix) <- make.names(rownames(cor_matrix))
+  colnames(p_matrix)   <- make.names(colnames(p_matrix))
+  rownames(p_matrix)   <- make.names(rownames(p_matrix))
+  # Create plot
+  pdf(paste0(output_dir,"brain_final_correlation_matrix_", gsub("[^A-Za-z0-9]", "_", group_name), "_v7.pdf"),
+      width = 6.5, height = 4.5)
+  corrplot::corrplot(cor_matrix, 
+                     method = "color",#"circle",#
+                     type = "lower",
+                     tl.col = "black",
+                     tl.srt = 45,
+                     tl.cex = 0.8,
+                     addCoef.col = "black",
+                     number.cex=0.7,
+                     col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(200),
+                     #significance
+                     p.mat=p_matrix,
+                     sig.level = 0.05,
+                     insig = c("label_sig"),
+                     pch.col = "black",
+                     pch.cex = 1,
+                     
+                     
+                     # clustering
+                     order="hclust",
+                     hclust.method="complete",
+                     
+                     title = paste("Correlation Matrix -", group_name,"n=",n_samples),
+                     mar = c(0, 0, 2, 0))
   
   dev.off()
+  
   return(cor_matrix)
 }
-
 
 # Generate correlation matrices for each group#groups <- unique(sample_sheet_lungs$Combined_Group)
 
@@ -777,14 +750,10 @@ correlation_results[["Overall"]] <- create_correlation_plot(data = comparison_da
 
 
 # From here continue in the CCC analysis.
-```{r}
-message("Here the brain analysis continues in the CCC file.")
-```
-
 
 # Reload data brain
 ```{r}
-
+library("dplyr")
 sample_sheet = "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/data/All lungs and brain_cleaned_Dec2025_NK.xlsx"
 sample_sheet_sheet_4_brain = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 4)
 head(sample_sheet_sheet_4_brain)

@@ -1,0 +1,14 @@
+*.pptx
+*.svg
+*.ai
+*.psd
+*.indd
+*.pdf
+*.docx
+*.pptx
+*.Rproj
+*.Rhistory
+*.RData
+*.Ruserdata
+*.log
+.DS_Store

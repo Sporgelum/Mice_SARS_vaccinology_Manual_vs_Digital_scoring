@@ -17,7 +17,7 @@ if (!dir.exists(output_dir)){dir.create(output_dir,recursive = TRUE)}
 
 
 ```{r}
-#.libPaths("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/")
+.libPaths("C:/Users/emari/OneDrive - Universitaet Bern/Documents/R/4.4.0/")
 #BiocManager::install(c("DescTools","infotheo"))
 library("ggplot2")
 library("ggpubr")
@@ -71,15 +71,15 @@ multima_day <- max(sample_sheet_brain$Euthanasia_day_dpi)
 
 sample_sheet_brain <- sample_sheet_brain  |> dplyr::mutate(
     # Time group based on euthanasia day
-    Time_Group = case_when(
+    Time_Group = dplyr::case_when(
       Euthanasia_day_dpi >= 0 & Euthanasia_day_dpi <= 4 ~ "Early infection (1-4 dpi)",
       Euthanasia_day_dpi >= 5 & Euthanasia_day_dpi <= 7 ~ "Peak of disease (5-7 dpi)",
       Euthanasia_day_dpi >= 8 & Euthanasia_day_dpi <= multima_day  ~ paste0("Resolution (8-",multima_day," dpi)"),
       TRUE ~ "Other"),
     # Vaccination status
-    Vaccination_Status = if_else(`Vaccinated (v), none (n)` == "n", "n", "v") |> factor())#(n)`, levels = c("n", "v"))
+    Vaccination_Status = dplyr::if_else(`Vaccinated (v), none (n)` == "n", "n", "v") |> factor())#(n)`, levels = c("n", "v"))
   
-sample_sheet_brain <- sample_sheet_brain |> mutate( Vaccination_Status = case_when( grepl(" p\\.v$", `Euthanasia day (dpi)`) ~ "v/nc", TRUE ~ as.character(Vaccination_Status) ),
+sample_sheet_brain <- sample_sheet_brain |> dplyr::mutate( Vaccination_Status = dplyr::case_when( grepl(" p\\.v$", `Euthanasia day (dpi)`) ~ "v/nc", TRUE ~ as.character(Vaccination_Status) ),
                                                      Vaccination_Status = factor(Vaccination_Status, levels = c("n", "v", "v/nc")))
 
 table(sample_sheet_brain$Vaccination_Status)
@@ -147,6 +147,35 @@ comparison_data_brain
 ```
 
 ```{r}
+sample_sheet_brain
+```
+
+
+```{r}
+sample_sheet_lungs = readxl::read_excel(sample_sheet, col_names = TRUE, sheet = 2)
+head(sample_sheet_lungs)
+colnames(sample_sheet_lungs)
+```
+```{r}
+head(sample_sheet_brain)
+colnames(sample_sheet_lungs)
+```
+
+
+```{r}
+sample_sheet_common_brain_and_lung <- sample_sheet_brain %>% dplyr::inner_join(sample_sheet_lungs,by = c("ID...1"="ID"))
+sample_sheet_common_brain_and_lung
+output_dir = "C:/Users/emari/OneDrive - Universitaet Bern/Nedim/2026/data/"
+
+write.table(file=paste0(output_dir,"common_brain_and_lung.csv"),
+            x=sample_sheet_common_brain_and_lung,
+            sep=",")
+
+```
+
+
+
+```{r}
 # Correct data from brain not log-ed.
 message("Some values in the qPCR for swabs and Brain (RNA/ml) and Live virus, are converted to log10, therefore ok, while others have a vlaue that is huge and need to be converted.")
 head(comparison_data_brain$qPCR_swabs)
@@ -201,6 +230,17 @@ brain_scores <- comparison_data_brain |>
 # Brain correlation in general manual to digital
 cor_spearman_brain <- cor(brain_scores$manual, brain_scores$digital,method = "spearman", use = "complete.obs")
 cor_spearman_brain
+
+
+cor_test_brain <- cor.test(brain_scores$manual,
+                           brain_scores$digital,
+                           method = "spearman",
+                           exact = FALSE)
+
+paste0('Cor: ',round(cor_test_brain$estimate,5))      # Spearman rho
+paste0('P-val: ',cor_test_brain$p.value,25)       # p‑value
+
+
 ```
 
 ```{r}
@@ -211,8 +251,8 @@ cor_brain_non_stratified <- ggplot(brain_scores, aes(x = manual, y = digital)) +
     method = "spearman",
     label.x.npc = "left",
     label.y.npc = "top",
-    aes(label = paste0("Spearman = ", after_stat(r.label),
-                       "\nP = ", after_stat(p.label)))) +
+    label.sep = "\n") +#,   # <-- ensures rho and p-value appear on separate lines
+    #aes(label = paste0("Spearman = ", after_stat(r.label),"\nP = ", after_stat(p.label)))) +
   labs(title = "Manual vs Digital Brain Scores",
     x = "Manual semiquantification (brain)",
     y = "Digital quantification (brain)") +
@@ -235,7 +275,7 @@ for (vs in brain_scores$vaccination_status){
 brain_scores_cor_brain
 ```
 
-```{r}
+```{r,fig.width=12,fig.height=8}
 # Get number of samples per group
 n_by_group <- brain_scores |>
       #dplyr::filter(!is.na(.data[[plt]]), .data[[plt]] != "") |>
@@ -254,8 +294,8 @@ ggplot(brain_scores, aes(x = manual, y = digital)) +
     method = "spearman",
     label.x.npc = "left",
     label.y.npc = "top",
-    aes(label = paste0("S = ", after_stat(r.label),
-                       "\nP = ", after_stat(p.label)))) +
+    label.sep = "\n") +
+    #aes(label = paste0("S = ", after_stat(r.label),"\nP = ", after_stat(p.label)))) +
   geom_text(data = n_by_group,aes(x = -Inf, y = Inf, label = paste0("n = ", n)),
             hjust = -0.1, vjust = 1.2, size = 3) +
   facet_grid(vaccination_status ~ time_group) +
@@ -409,7 +449,8 @@ ccc_brains_df <- do.call(rbind,
 
 #ccc_by_group <- ccc_brain_scores_stratified
 brain_ccc_strat <- ggplot(brain_scores, aes(x = manual_collapsed, y = digital_tree_binned)) +
-  geom_jitter(size = 3, alpha = 0.7, color = "#3C1642") +
+  #geom_jitter(size = 3, alpha = 0.7, color = "#3C1642") +
+  geom_point(size = 3, alpha = 0.7, color = "#3C1642") +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
   geom_smooth(method = "lm", se = TRUE, color = "black") +
   stat_cor(method = "spearman", label.x =0, label.y = 5,size=5) +
@@ -439,6 +480,8 @@ ccc_result_brain$rho.c      # overall CCC
 ccc_result_brain$s.shift    # scale shift
 ccc_result_brain$l.shift    # location shift
 ccc_result_brain$C.b        # accuracy
+ccc_result_brain$rho.c$lwr.ci      # lower CI
+ccc_result_brain$rho.c$upr.ci      # upper CI
 ```
 
 ```{r}
@@ -449,12 +492,13 @@ write.table(comparison_data_brain,file = paste0(output_dir,"comparison_data_brai
 ```{r}
 #brain_ccc <- ggplot(brain_scores, aes(x = manual, y = digital_binned)) +
 brain_ccc <- ggplot(brain_scores, aes(x = manual_collapsed, y = digital_tree_binned)) +
-  geom_jitter(size = 3, alpha = 0.7, color = "#3C1642") +
+  #geom_jitter(size = 3, alpha = 0.7, color = "#3C1642") +
+  geom_point(size = 3, alpha = 0.7, color = "#3C1642") +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
   geom_smooth(method = "lm", se = TRUE, color = "black") +
   stat_cor(method = "spearman", label.x =0, label.y = 5,size=5) +
   annotate("text", 
-           label = paste0("CCC = ", round(ccc_result_brain$rho.c[,1], 3)),
+           label = paste0("CCC = ", round(ccc_result_brain$rho.c[,1], 3),"\n95% CI:",round(ccc_result_brain$rho.c$lwr.ci,3),"-",round(ccc_result_brain$rho.c$upr.ci,3)),
            x= 0.44,y=3.7,#hjust=-0.3,vjust=3,
            size=5) +
   xlim(0,4)+
@@ -570,6 +614,16 @@ lung_scores <- comparison_data_lung |>
 cor_spearman_lung <- cor(lung_scores$manual, lung_scores$digital,
                     method = "spearman", use = "complete.obs")
 cor_spearman_lung
+
+
+cor_test_lung <- cor.test(lung_scores$manual,
+                           lung_scores$digital,
+                           method = "spearman",
+                           exact = FALSE)
+
+paste0('Cor: ',round(cor_test_lung$estimate,5))      # Spearman rho
+paste0('P-val: ',cor_test_lung$p.value,25)       # p‑value
+
 ```
 
 ```{r}
@@ -580,8 +634,8 @@ cor_lung_non_stratified <- ggplot(lung_scores, aes(x = manual, y = digital)) +
     method = "spearman",
     label.x.npc = "left",
     label.y.npc = "top",
-    aes(label = paste0("Spearman = ", after_stat(r.label),
-                       "\nP = ", after_stat(p.label)))) +
+    labels.sep = "\n") +
+    #aes(label = paste0("Spearman = ", after_stat(r.label),"\nP = ", after_stat(p.label)))) +
   labs(title = "Manual vs Digital Lung Scores",
     x = "Manual semiquantification (lung)",
     y = "Digital quantification (lung)") +
@@ -612,8 +666,8 @@ ggplot(lung_scores, aes(x = manual, y = digital)) +
     method = "spearman",
     label.x.npc = "left",
     label.y.npc = "top",
-    aes(label = paste0("S = ", after_stat(r.label),
-                       "\nP = ", after_stat(p.label)))) +
+    label.sep = "\n") +
+    #aes(label = paste0("S = ", after_stat(r.label),"\nP = ", after_stat(p.label)))) +
   geom_text(data = n_by_group,aes(x = -Inf, y = Inf, label = paste0("n = ", n)),
             hjust = -0.1, vjust = 1.2, size = 3) +
   
@@ -768,18 +822,22 @@ ccc_result_lung$rho.c      # overall CCC
 ccc_result_lung$s.shift    # scale shift
 ccc_result_lung$l.shift    # location shift
 ccc_result_lung$C.b        # accuracy
+ccc_result_lung$rho.c$lwr.ci #lower ci
+ccc_result_lung$rho.c$upr.ci #upper ci
 ```
 ```{r}
 
 
 #lung_ccc <- ggplot(lung_scores, aes(x = manual, y = digital_binned)) +
 lung_ccc <- ggplot(lung_scores, aes(x = manual, y = digital_tree_binned)) +
-  geom_jitter(size = 3, alpha = 0.7, color = "#FB8500") +
+  #geom_jitter(size = 3, alpha = 0.7, color = "#FB8500") +
+  geom_point(size = 3, alpha = 0.7, color = "#FB8500") +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
   geom_smooth(method = "lm", se = TRUE, color = "black") +
   stat_cor(method = "spearman", label.x =0, label.y = 5,size=5) +
   annotate("text", 
-           label = paste0("CCC = ", round(ccc_result_lung$rho.c[,1], 3)),
+           label = paste0("CCC = ", round(ccc_result_lung$rho.c[,1], 3),"\n95% CI:",round(ccc_result_lung$rho.c$lwr.ci,3),"-",round(ccc_result_lung$rho.c$upr.ci,3)),
+
            x=0.44, y=3.7,size=5) +
   xlim(0,4)+
   ylim(0,4)+
@@ -810,32 +868,153 @@ ggsave(paste0(output_dir, "brain_mq_vs_dq_&_lubg_mq_vs_dq_ccc.pdf"),
        dpi = 600)
 ```
 
-
+# Bland Altman Brain
 ```{r}
+
+
+library(ggplot2)
+manual  <- brain_scores$manual
+digital <- brain_scores$digital_tree_binned
+
+diffs <- manual - digital
+means <- (manual + digital) / 2
+
+bias <- mean(diffs)
+loa  <- bias + c(-1.96, 1.96) * sd(diffs)
+
+ba_plot_brain <- ggplot(data.frame(means, diffs), aes(x = means, y = diffs)) +
+  #geom_point(size = 3, alpha = 0.7, color = "#219ebc") +
+  geom_jitter(size = 3, alpha = 0.7, color = "#3C1642") +
+  geom_hline(yintercept = bias, color = "red", size = 1) +
+  geom_hline(yintercept = loa, linetype = "dashed", color = "black") +
+  annotate("text", x = 0.5, y = bias + 0.2,
+           label = paste0("Bias = ", round(bias, 2))) +
+  annotate("text", x = 0.5, y = loa[1] + 0.2,
+           label = paste0("Lower LoA = ", round(loa[1], 2))) +
+  annotate("text", x = 0.5, y = loa[2] - 0.2,
+           label = paste0("Upper LoA = ", round(loa[2], 2))) +
+  labs(title = "Bland–Altman Plot: Manual vs Digital (Binned)",
+       x = "Mean of Methods",
+       y = "Difference (Manual - Digital)") +
+  theme_bw()
+
+ba_plot_brain
+```
+
+
+# Bland Altman Lung
+```{r}
+library(DescTools)
+
+# Bland–Altman analysis
+ba_lung <- data.frame("Manual"=lung_scores$manual,"Digital"=lung_scores$digital_tree_binned)
+ba_lung$avg <- rowMeans(ba_lung)
+ba_lung$diff <- ba_lung$Manual - ba_lung$Digital
+
+mean_diff <- mean(ba_lung$diff) # Mean difference
+lower <- mean_diff - 1.96 * sd(ba_lung$diff) # Lower limit
+upper <- mean_diff + 1.96 * sd(ba_lung$diff) # Upper limit
+
+library(ggplot2)
+ggplot(ba_lung, aes(x = avg, y = diff)) +
+ #geom_jitter(size = 2) +
+ geom_jitter(size = 3, alpha = 0.7, color = "#FB8500") +
+ geom_hline(yintercept = mean_diff, color = "blue") +
+ geom_hline(yintercept = lower, color = "red", linetype = "dashed") +
+ geom_hline(yintercept = upper, color = "red", linetype = "dashed") +
+ ggtitle("Bland-Altman Plot") +
+ xlab("Average Measurement") +
+ ylab("Difference Between Measurements")
+
+
+
+library(BlandAltmanLeh)
+bland.altman.plot(ba_lung$Manual, ba_lung$Digital, conf.int = 0.95, graph.sys = "ggplot2")
+
+
+library(ggplot2)
+manual  <- lung_scores$manual
+digital <- lung_scores$digital_tree_binned
+
+diffs <- manual - digital
+means <- (manual + digital) / 2
+
+bias <- mean(diffs)
+loa  <- bias + c(-1.96, 1.96) * sd(diffs)
+
+ba_plot_lung <- ggplot(data.frame(means, diffs), aes(x = means, y = diffs)) +
+  #geom_point(size = 3, alpha = 0.7, color = "#219ebc") +
+  geom_jitter(size = 3, alpha = 0.7, color = "#FB8500") +
+  geom_hline(yintercept = bias, color = "red", size = 1) +
+  geom_hline(yintercept = loa, linetype = "dashed", color = "black") +
+  annotate("text", x = 0.5, y = bias + 0.2,
+           label = paste0("Bias = ", round(bias, 2))) +
+  annotate("text", x = 0.5, y = loa[1] + 0.2,
+           label = paste0("Lower LoA = ", round(loa[1], 2))) +
+  annotate("text", x = 0.5, y = loa[2] - 0.2,
+           label = paste0("Upper LoA = ", round(loa[2], 2))) +
+  labs(title = "Bland–Altman Plot: Manual vs Digital (Binned)",
+       x = "Mean of Methods",
+       y = "Difference (Manual - Digital)") +
+  theme_bw()
+
+ba_plot_lung
+
 ```
 
 
 ```{r}
+# 1. Bland–Altman analysis (gold standard)
+# This is the primary method used in biomedical method comparison.
+# 
+# It tests interchangeability by evaluating:
+# Mean bias (systematic difference)
+# Limits of agreement (LoA)
+# Heteroscedasticity (variance changes with magnitude)
+# 
+# Interpretation:
+# Bias ≈ 0 → no systematic difference
+# LoA narrow enough → methods interchangeable
+# LoA wide → methods not interchangeable
+# For your case, you will almost certainly see:
+# A non-zero bias (manual is coarse, digital is continuous)
+# Wide LoA (manual has higher measurement error)
+# This supports your message:
+# 
+# “Good agreement, but not interchangeable.”
+
 ```
 
 
 ```{r}
+two_panel <- ggarrange(ba_plot_lung,ba_plot_brain,
+                       ncol = 2,
+                       nrow = 1,
+                       common.legend = FALSE)
+
+two_panel
+
+# Save the two panel plot
+ggsave(paste0(output_dir, "lung_mq_vs_dq_&_brain_mq_vs_dq_bland_altman.pdf"), 
+       two_panel, 
+       width = 13, 
+       height = 4.5, 
+       dpi = 600)
+```
+
+# Lung
+```{r}
+# Bland–Altman analysis showed a minimal mean bias (–0.07), indicating no systematic difference between manual and digital (binned) scoring. However, the limits of agreement were wide (–0.79 to +0.66), meaning that individual measurements can differ by up to ~0.7–0.8 scoring units. This variability is substantial relative to the 0–4 scale and exceeds acceptable thresholds for interchangeability. Thus, although the two methods agree on average, they cannot be considered interchangeable. The digital method provides a more precise and consistent measurement, whereas the manual method introduces greater variability.
+```
+
+# Brain
+```{r}
+#The brain Bland–Altman plot shows minimal bias and relatively narrow limits of agreement (–0.38 to +0.38), indicating good concordance between manual and digital scoring. Although the two methods show closer agreement than in the lung dataset, the remaining variability suggests that they are not fully interchangeable. The digital method remains more precise and provides a more granular quantitative assessment.
 ```
 
 
 ```{r}
-```
-
-
-```{r}
-```
-
-
-```{r}
-```
-
-
-```{r}
+# The lung dataset (n=250) showed wider limits of agreement (–0.79 to +0.66) than the brain dataset (n=106; –0.38 to +0.38). This difference likely reflects both the larger sample size, which captures greater variability, and the inherently higher heterogeneity and scoring difficulty of lung pathology. In contrast, brain scores were more consistent across samples, resulting in narrower limits of agreement.
 ```
 
 
